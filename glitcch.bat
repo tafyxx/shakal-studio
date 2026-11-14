@@ -697,7 +697,7 @@ class ShakalStudioApp:
         self.root.bind("<F8>", lambda e: self.capture_fullscreen())
         self.root.bind("<F9>", lambda e: self.start_region_select())
         self.root.bind("<F10>", lambda e: self.toggle_video_recording())
-        self.root.bind("<F11>", lambda e: self.toggle_overlay_screen1())
+        self.root.bind("<F11>", lambda e: self.toggle_discord_stream_window())
         self.root.bind("<F12>", lambda e: self.stop_all_prank_streams())
 
         # Start Direct Windows API Hotkey Poller
@@ -715,6 +715,10 @@ class ShakalStudioApp:
             self.lbl_hover_desc.config(text=f"📌 {title}: {desc}", fg=THEME["accent_blue"])
         else:
             self.lbl_hover_desc.config(text="Наведите курсор на любую настройку для подробного описания эффекта", fg=THEME["text_dim"])
+
+    def setup_hover(self, widget, title, desc):
+        widget.bind("<Enter>", lambda e: self.show_hover_description(title, desc))
+        widget.bind("<Leave>", lambda e: self.show_hover_description("", ""))
 
     def apply_display_affinity(self):
         try:
@@ -1000,6 +1004,8 @@ class ShakalStudioApp:
         tk.Label(v_top, text="Видео-стиль:", font=("Segoe UI", 8), bg=THEME["bg_root"], fg=THEME["text_dim"]).pack(side="left")
 
         v_presets = [
+            "🛡️ Чит-Проверка: Сбой Windows и Видеокарты",
+            "Проверка на читы",
             "Стандартный Шакал",
             "ЭКСТРИМ ВИДЕО: Инфаркт",
             "ЭКСТРИМ ВИДЕО: Взрыв Перепонок",
@@ -1010,11 +1016,29 @@ class ShakalStudioApp:
             "VHS Хоррор 1994"
         ]
         self.v_preset_var = tk.StringVar(value="Стандартный Шакал")
-        self.menu_v_presets = MotionDropdown(v_top, self.v_preset_var, v_presets, callback=self.on_video_preset_picked, hover_cb=self.show_hover_description, hover_title="Видео-стили", hover_desc="Готовые конфигурации для записи видео экрана.")
-        self.menu_v_presets.pack(side="left", padx=(3, 8))
+        self.menu_v_presets = MotionDropdown(v_top, self.v_preset_var, v_presets, callback=self.on_video_preset_picked, hover_cb=self.show_hover_description, hover_title="Видео-стили", hover_desc="Готовые конфигурации для записи видео и стрима.")
+        self.menu_v_presets.pack(side="left", padx=(3, 6))
+
+        btn_v_cheat = tk.Button(
+            v_top, text="🛡️ Чит-Проверка", font=("Segoe UI", 8, "bold"),
+            bg=THEME["btn_bg"], fg=THEME["accent_amber"], activebackground=THEME["accent_amber"], activeforeground="#000000",
+            bd=0, padx=6, pady=2, cursor="hand2", highlightbackground=THEME["accent_amber"], highlightthickness=1,
+            command=lambda: self.on_video_preset_picked("Проверка на читы")
+        )
+        btn_v_cheat.pack(side="left", padx=(0, 4))
+        self.setup_hover(btn_v_cheat, "Пресет Чит-Проверка", "В один клик включает артефакты видеокарты, залагивание окон и статтеры для демки в Discord.")
+
+        btn_v_stream = tk.Button(
+            v_top, text="🪟 Окно Стрима Discord", font=("Segoe UI", 8, "bold"),
+            bg=THEME["btn_bg"], fg=THEME["accent_blue"], activebackground=THEME["accent_blue"], activeforeground="#ffffff",
+            bd=0, padx=6, pady=2, cursor="hand2", highlightbackground=THEME["accent_blue"], highlightthickness=1,
+            command=self.toggle_discord_stream_window
+        )
+        btn_v_stream.pack(side="left", padx=(0, 6))
+        self.setup_hover(btn_v_stream, "Окно Стрима Discord", "Открывает отдельное окно Рабочий стол Windows для стрима в Discord без глюков и оверлеев.")
 
         tk.Label(v_top, text="Статус:", font=("Segoe UI", 8), bg=THEME["bg_root"], fg=THEME["text_dim"]).pack(side="left")
-        self.v_live_badge = tk.Label(v_top, text="ОЖИДАНИЕ ЗАПИСИ", font=("Consolas", 8, "bold"), bg=THEME["bg_card"], fg=THEME["accent_blue"], padx=6, pady=1)
+        self.v_live_badge = tk.Label(v_top, text="ОЖИДАНИЕ", font=("Consolas", 8, "bold"), bg=THEME["bg_card"], fg=THEME["accent_blue"], padx=6, pady=1)
         self.v_live_badge.pack(side="left", padx=3)
 
         # Video Resolution Slider on top row
@@ -1221,13 +1245,14 @@ class ShakalStudioApp:
         monitors = get_system_monitors()
         self.has_second_monitor = len(monitors) > 1
 
-        # Button 1: Transparent Click-Through Overlay on Screen 1
-        self.btn_overlay = tk.Button(
-            head_f, text="📺 ОВЕРЛЕЙ НА ЭКРАН 1: СКВОЗНОЙ", font=("Segoe UI", 8, "bold"),
-            bg=THEME["accent_amber"], fg="#000000", activebackground="#d97706", activeforeground="#ffffff",
-            bd=0, padx=8, pady=2, cursor="hand2", command=self.toggle_overlay_screen1
+        # Button 1: Stream Window for Discord Applications Tab (Recommended & Bug-Free)
+        self.btn_pop_stream = tk.Button(
+            head_f, text="🪟 ОКНО ДЛЯ СТРИМА DISCORD", font=("Segoe UI", 8, "bold"),
+            bg=THEME["btn_bg"], fg=THEME["accent_blue"], activebackground=THEME["accent_blue"], activeforeground="#ffffff",
+            bd=0, padx=8, pady=2, cursor="hand2", highlightbackground=THEME["accent_blue"], highlightthickness=1,
+            command=self.toggle_discord_stream_window
         )
-        self.btn_overlay.pack(side="left", padx=(0, 4))
+        self.btn_pop_stream.pack(side="left", padx=2)
 
         # Quick cheat check preset trigger right on Discord tab
         btn_quick_cheat = tk.Button(
@@ -1238,13 +1263,13 @@ class ShakalStudioApp:
         )
         btn_quick_cheat.pack(side="left", padx=2)
 
-        # Button 2: Stream Window for Discord Applications Tab
-        self.btn_pop_stream = tk.Button(
-            head_f, text="🪟 ОКНО ДЛЯ СТРИМА DISCORD", font=("Segoe UI", 8, "bold"),
-            bg=THEME["btn_bg"], fg=THEME["accent_blue"], activebackground=THEME["accent_blue"], activeforeground="#000000",
-            bd=0, padx=8, pady=2, cursor="hand2", command=self.toggle_discord_stream_window
+        # Optional Transparent Click-Through Overlay on Screen 1
+        self.btn_overlay = tk.Button(
+            head_f, text="📺 ОВЕРЛЕЙ НА ЭКРАН 1", font=("Segoe UI", 8),
+            bg=THEME["btn_bg"], fg=THEME["text_dim"], activebackground=THEME["border_highlight"], activeforeground=THEME["text_main"],
+            bd=0, padx=6, pady=2, cursor="hand2", command=self.toggle_overlay_screen1
         )
-        self.btn_pop_stream.pack(side="left", padx=2)
+        self.btn_overlay.pack(side="left", padx=(4, 2))
 
         if self.has_second_monitor:
             self.btn_screen2 = tk.Button(
@@ -1364,12 +1389,11 @@ class ShakalStudioApp:
         except Exception:
             pass
 
-        # Automatically start the overlay if not yet active so prank is LIVE!
-        if not self.is_overlay_active:
-            self.toggle_overlay_screen1()
+        # Apply to video mode directly so Discord demo stream is fully synchronized!
+        self.on_video_preset_picked("Проверка на читы")
 
         ShakalAudioEngine.play("usb_disconnect")
-        self.status_var.set("Пресет Проверка на читы включен и работает на экране!")
+        self.status_var.set("Пресет Проверка на читы включен для видео и стрима!")
 
     def toggle_overlay_screen1(self):
         if self.overlay_window is None or not self.overlay_window.winfo_exists():
@@ -1984,10 +2008,12 @@ class ShakalStudioApp:
     #                         VIDEO RECORDING ENGINE
     # =========================================================================
     def update_v_res_label(self, *args):
-        pct = max(3, min(100, self.v_res_var.get()))
-        tw = max(32, int(NATIVE_W * (pct / 100.0)))
-        th = max(24, int(NATIVE_H * (pct / 100.0)))
-        self.lbl_v_res.config(text=f"Качество видео: {tw}x{th} при {pct}%")
+        val = max(72, min(NATIVE_H, self.v_res_var.get()))
+        aspect = NATIVE_W / float(NATIVE_H)
+        tw = max(32, int(val * aspect))
+        th = val
+        if hasattr(self, "lbl_v_res"):
+            self.lbl_v_res.config(text=f"Качество: {th}p — {tw}x{th}")
 
     def pick_video_folder(self):
         chosen = filedialog.askdirectory(initialdir=self.video_save_dir)
@@ -1996,13 +2022,55 @@ class ShakalStudioApp:
             self.lbl_v_save_dir.config(text=f"Папка: {os.path.basename(self.video_save_dir) or self.video_save_dir}")
 
     def on_video_preset_picked(self, name):
-        if name == "Стандартный Шакал":
-            self.v_res_var.set(45)
+        if name in ("🛡️ Чит-Проверка: Сбой Windows и Видеокарты", "Проверка на читы"):
+            self.v_res_var.set(NATIVE_H)
+            self.v_fps_var.set(60)
+            self.v_q_var.set(95)
+            self.v_burn_var.set(0)
+            self.v_fry_var.set(1.0)
+            self.v_stutter_var.set(30)
+            self.v_rgb_var.set(0)
+            self.v_mosh_var.set(0)
+            self.v_tear_var.set(0)
+            self.v_crt_var.set(0)
+            self.v_invert_var.set(False)
+            self.v_ghost_var.set(75)
+            self.v_gpu_art_var.set(35)
+            self.v_ad_rate_var.set(0)
+            self.v_ad_max_var.set(0)
+            self.v_ad_shake_var.set(0)
+            self.v_ad_accum_var.set(False)
+            self.v_ad_sound_var.set(False)
+            self.v_rand_av_var.set(False)
+            self.v_rand_scr_var.set(False)
+            self.v_scr_extreme_var.set(False)
+            self.v_end_bsod_var.set(False)
+            self.v_wm_var.set("none")
+            if hasattr(self, "menu_v_wm"):
+                self.menu_v_wm.lbl.config(text="Без знака")
+            self.v_audio_enable_var.set(True)
+            self.v_bass_var.set(0)
+            self.v_clip_var.set(0)
+            self.v_drop_var.set(0)
+            self.v_bit_var.set(0)
+            self.v_hum_var.set(0)
+            self.v_screamer_vol_var.set(0)
+            try:
+                raw = ImageGrab.grab().convert("RGB")
+                self._ghost_history = [raw, raw]
+            except Exception:
+                pass
+            self.v_status_var.set("Пресет Чит-Проверка активирован для видео и стрима!")
+            ShakalAudioEngine.play("usb_disconnect")
+        elif name == "Стандартный Шакал":
+            self.v_res_var.set(360)
             self.v_fps_var.set(15)
             self.v_q_var.set(30)
             self.v_burn_var.set(30)
             self.v_fry_var.set(1.3)
             self.v_stutter_var.set(15)
+            self.v_ghost_var.set(0)
+            self.v_gpu_art_var.set(0)
             self.v_ad_rate_var.set(30)
             self.v_ad_max_var.set(25)
             self.v_bass_var.set(35)
@@ -2010,13 +2078,18 @@ class ShakalStudioApp:
             self.v_drop_var.set(15)
             self.v_rand_scr_var.set(False)
             self.v_scr_extreme_var.set(False)
+            self.v_wm_var.set("hypercam")
+            if hasattr(self, "menu_v_wm"):
+                self.menu_v_wm.lbl.config(text="Unregistered HyperCam 2")
         elif name == "ЭКСТРИМ ВИДЕО: Инфаркт":
-            self.v_res_var.set(65)
+            self.v_res_var.set(480)
             self.v_fps_var.set(240)
             self.v_q_var.set(20)
             self.v_burn_var.set(40)
             self.v_fry_var.set(3.4)
             self.v_stutter_var.set(40)
+            self.v_ghost_var.set(40)
+            self.v_gpu_art_var.set(30)
             self.v_ad_rate_var.set(80)
             self.v_ad_max_var.set(80)
             self.v_rand_scr_var.set(True)
@@ -2028,11 +2101,13 @@ class ShakalStudioApp:
             self.v_bit_var.set(60)
             self.v_end_bsod_var.set(True)
         elif name == "ЭКСТРИМ ВИДЕО: Взрыв Перепонок":
-            self.v_res_var.set(50)
+            self.v_res_var.set(360)
             self.v_fps_var.set(60)
             self.v_q_var.set(15)
             self.v_burn_var.set(70)
             self.v_fry_var.set(4.0)
+            self.v_ghost_var.set(0)
+            self.v_gpu_art_var.set(40)
             self.v_bass_var.set(100)
             self.v_clip_var.set(100)
             self.v_drop_var.set(45)
@@ -2041,58 +2116,78 @@ class ShakalStudioApp:
             self.v_mosh_var.set(60)
             self.v_tear_var.set(75)
         elif name == "ЭКСТРИМ ВИДЕО: Рекламный Ад и Вирусы":
-            self.v_res_var.set(45)
+            self.v_res_var.set(480)
             self.v_fps_var.set(30)
             self.v_q_var.set(25)
             self.v_burn_var.set(40)
             self.v_fry_var.set(1.5)
             self.v_stutter_var.set(30)
+            self.v_ghost_var.set(0)
+            self.v_gpu_art_var.set(0)
             self.v_ad_rate_var.set(95)
             self.v_ad_max_var.set(180)
             self.v_ad_accum_var.set(True)
             self.v_rand_av_var.set(True)
         elif name == "ЭКСТРИМ ВИДЕО: Агония Матрицы":
-            self.v_res_var.set(35)
+            self.v_res_var.set(240)
             self.v_fps_var.set(120)
             self.v_q_var.set(10)
             self.v_burn_var.set(85)
             self.v_fry_var.set(3.5)
+            self.v_ghost_var.set(0)
+            self.v_gpu_art_var.set(70)
             self.v_mosh_var.set(85)
             self.v_tear_var.set(90)
             self.v_end_bsod_var.set(True)
             self.v_bass_var.set(70)
         elif name == "HyperCam 2007":
-            self.v_res_var.set(30)
+            self.v_res_var.set(240)
             self.v_fps_var.set(4)
             self.v_q_var.set(15)
             self.v_burn_var.set(15)
             self.v_fry_var.set(1.2)
+            self.v_ghost_var.set(0)
+            self.v_gpu_art_var.set(0)
             self.v_wm_var.set("hypercam")
-            self.menu_v_wm.lbl.config(text="Unregistered HyperCam 2")
+            if hasattr(self, "menu_v_wm"):
+                self.menu_v_wm.lbl.config(text="Unregistered HyperCam 2")
             self.v_bit_var.set(60)
             self.v_hum_var.set(50)
         elif name == "Выгорание Матрицы OLED":
-            self.v_res_var.set(40)
+            self.v_res_var.set(480)
             self.v_fps_var.set(30)
             self.v_q_var.set(20)
             self.v_burn_var.set(90)
             self.v_fry_var.set(2.4)
+            self.v_ghost_var.set(0)
+            self.v_gpu_art_var.set(0)
             self.v_rgb_var.set(20)
         elif name == "VHS Хоррор 1994":
-            self.v_res_var.set(45)
+            self.v_res_var.set(360)
             self.v_fps_var.set(24)
             self.v_q_var.set(25)
             self.v_burn_var.set(50)
             self.v_fry_var.set(1.6)
+            self.v_ghost_var.set(0)
+            self.v_gpu_art_var.set(0)
             self.v_crt_var.set(65)
             self.v_tear_var.set(55)
             self.v_wm_var.set("cctv")
-            self.menu_v_wm.lbl.config(text="Камера CCTV REC")
+            if hasattr(self, "menu_v_wm"):
+                self.menu_v_wm.lbl.config(text="Камера CCTV REC")
 
+        self.v_preset_var.set(name)
+        if hasattr(self, "menu_v_presets"):
+            self.menu_v_presets.lbl.config(text=name)
+
+        if hasattr(self, "scale_v_res"):
+            self.scale_v_res.set(self.v_res_var.get())
         self.update_v_res_label()
+
         for s in [self.ctrl_v_fps, self.ctrl_v_q, self.ctrl_v_burn, self.ctrl_v_fry,
                   self.ctrl_v_stutter, self.ctrl_v_rgb, self.ctrl_v_mosh, self.ctrl_v_tear,
-                  self.ctrl_v_crt, self.ctrl_v_ad_rate, self.ctrl_v_ad_max, self.ctrl_v_ad_shake,
+                  self.ctrl_v_crt, self.ctrl_v_ghost, self.ctrl_v_gpu,
+                  self.ctrl_v_ad_rate, self.ctrl_v_ad_max, self.ctrl_v_ad_shake,
                   self.ctrl_v_bass, self.ctrl_v_clip, self.ctrl_v_drop, self.ctrl_v_bit, self.ctrl_v_hum, self.ctrl_v_scr_vol]:
             s.update_entry()
             s.scale.set(s.var.get())
@@ -3095,7 +3190,7 @@ class ShakalStudioApp:
                         self.root.after(0, self.toggle_video_recording)
                     elif user32.GetAsyncKeyState(0x7A) & 0x8000: # F11
                         last_t = now
-                        self.root.after(0, self.toggle_overlay_screen1)
+                        self.root.after(0, self.toggle_discord_stream_window)
                     elif user32.GetAsyncKeyState(0x7B) & 0x8000: # F12
                         last_t = now
                         self.root.after(0, self.stop_all_prank_streams)

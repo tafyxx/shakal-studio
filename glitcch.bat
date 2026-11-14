@@ -754,28 +754,20 @@ class ShakalStudioApp:
 
         tk.Label(top_bar, text="Пресет:", font=("Segoe UI", 8), bg=THEME["bg_root"], fg=THEME["text_dim"]).pack(side="left")
 
-        self.preset_options = [
+        ordered_priority = [
             "Сброс",
-            "🔥 ЭКСТРИМ: Инфаркт Скример",
-            "💀 ЭКСТРИМ: Ear-Rape и Штопор",
-            "☣️ ЭКСТРИМ: Вирусный Апокалипсис",
-            "⚡ ЭКСТРИМ: Смерть Видеокарты",
-            "🌀 ЭКСТРИМ: Психоделический Негатив",
-            "📢 ЭКСТРИМ: Мемный Спам-Флуд",
-            "Ретро CRT Телевизор 1985",
-            "VHS Кассета Хоррор 1994",
-            "Nokia 3310",
-            "HyperCam 2007 Геймплей",
-            "Kaspersky Total Attack",
-            "Windows 11 BSOD",
-            "Лаг BSOD",
-            "XP Зависание окон",
-            "Рыбий глаз CCTV",
-            "Dial-Up 1999",
-            "Deep-Fry Кислота"
-        ] + [k for k in self.custom_presets.keys() if k not in ["МАМА"]]
-        if "МАМА" in self.custom_presets:
-            self.preset_options.insert(1, "МАМА")
+            "🛡️ Чит-Проверка: Сбой Windows и Видеокарты",
+            "Проверка на читы",
+            "МАМА"
+        ]
+        preset_list = []
+        for k in ordered_priority:
+            if k == "Сброс" or k in self.custom_presets:
+                preset_list.append(k)
+        for k in self.custom_presets.keys():
+            if k not in preset_list:
+                preset_list.append(k)
+        self.preset_options = preset_list
 
         self.selected_preset_var = tk.StringVar(value="Сброс")
         self.menu_presets = MotionDropdown(top_bar, self.selected_preset_var, self.preset_options, callback=self.on_preset_picked, hover_cb=self.show_hover_description, hover_title="Пресеты", hover_desc="Выбор готовой комбинации искажений, ретро-стилей и экстрим-скримеров.")
@@ -1237,6 +1229,15 @@ class ShakalStudioApp:
         )
         self.btn_overlay.pack(side="left", padx=(0, 4))
 
+        # Quick cheat check preset trigger right on Discord tab
+        btn_quick_cheat = tk.Button(
+            head_f, text="🛡️ ПРЕСЕТ: ПРОВЕРКА НА ЧИТЫ", font=("Segoe UI", 8, "bold"),
+            bg=THEME["btn_bg"], fg=THEME["accent_amber"], activebackground=THEME["accent_amber"], activeforeground="#000000",
+            bd=0, padx=8, pady=2, cursor="hand2", highlightbackground=THEME["accent_amber"], highlightthickness=1,
+            command=self.apply_cheat_check_preset
+        )
+        btn_quick_cheat.pack(side="left", padx=2)
+
         # Button 2: Stream Window for Discord Applications Tab
         self.btn_pop_stream = tk.Button(
             head_f, text="🪟 ОКНО ДЛЯ СТРИМА DISCORD", font=("Segoe UI", 8, "bold"),
@@ -1336,8 +1337,20 @@ class ShakalStudioApp:
         )
         tk.Label(info_f, text=info_txt, font=("Segoe UI", 8), bg=THEME["bg_card_inner"], fg=THEME["text_dim"], justify="left").pack(anchor="w", padx=6, pady=(0, 4))
 
+    def apply_cheat_check_preset(self):
+        target = "🛡️ Чит-Проверка: Сбой Windows и Видеокарты"
+        if target not in self.custom_presets and "Проверка на читы" in self.custom_presets:
+            target = "Проверка на читы"
+        if target in self.custom_presets:
+            self.apply_preset_dict(self.custom_presets[target])
+            self.selected_preset_var.set(target)
+            if hasattr(self, "menu_presets"):
+                self.menu_presets.lbl.config(text=target)
+            self.status_var.set("Пресет Проверка на читы активирован")
+
     def toggle_overlay_screen1(self):
         if self.overlay_window is None or not self.overlay_window.winfo_exists():
+            # 1. Create transparent click-through background window
             self.overlay_window = tk.Toplevel(self.root)
             self.overlay_window.title("Shakal Overlay")
             self.overlay_window.geometry(f"{NATIVE_W}x{NATIVE_H}+0+0")
@@ -1359,13 +1372,49 @@ class ShakalStudioApp:
             self.overlay_canvas = tk.Label(self.overlay_window, bg="#010203", bd=0)
             self.overlay_canvas.pack(fill="both", expand=True)
 
+            # 2. Dedicated Clickable Floating Exit Bar (top center)
+            self.overlay_ctrl_bar = tk.Toplevel(self.root)
+            self.overlay_ctrl_bar.title("Shakal Exit Bar")
+            bar_w, bar_h = 300, 36
+            bar_x = (NATIVE_W - bar_w) // 2
+            bar_y = 10
+            self.overlay_ctrl_bar.geometry(f"{bar_w}x{bar_h}+{bar_x}+{bar_y}")
+            self.overlay_ctrl_bar.overrideredirect(True)
+            self.overlay_ctrl_bar.attributes("-topmost", True)
+            self.overlay_ctrl_bar.configure(bg="#be123c")
+
+            # Exclude Floating Exit Bar from screen capture so viewers cannot see it!
+            try:
+                hwnd_bar = self.overlay_ctrl_bar.winfo_id()
+                ctypes.windll.user32.SetWindowDisplayAffinity(hwnd_bar, 0x11)
+            except Exception:
+                pass
+
+            btn_exit = tk.Button(
+                self.overlay_ctrl_bar, text="🛑 ВЫКЛЮЧИТЬ ОВЕРЛЕЙ [Esc]",
+                font=("Segoe UI", 9, "bold"), bg="#be123c", fg="#ffffff",
+                activebackground="#9f1239", activeforeground="#ffffff",
+                bd=0, cursor="hand2", command=self.stop_all_prank_streams
+            )
+            btn_exit.pack(fill="both", expand=True, padx=2, pady=2)
+
+            # 3. Keep Main Studio Window on top so user can control it at any time
+            self.root.attributes("-topmost", True)
+            self.root.lift()
+
             self.btn_overlay.config(text="🛑 ОСТАНОВИТЬ ОВЕРЛЕЙ", bg=THEME["accent_rose"], fg="#ffffff")
             self.is_overlay_active = True
-            self.overlay_window.bind("<Escape>", lambda e: self.stop_overlay())
         else:
-            self.stop_overlay()
+            self.stop_all_prank_streams()
 
     def stop_overlay(self):
+        if hasattr(self, "overlay_ctrl_bar") and self.overlay_ctrl_bar:
+            try:
+                self.overlay_ctrl_bar.destroy()
+            except Exception:
+                pass
+            self.overlay_ctrl_bar = None
+
         if self.overlay_window:
             try:
                 self.overlay_window.destroy()
@@ -1373,6 +1422,7 @@ class ShakalStudioApp:
                 pass
             self.overlay_window = None
             self.overlay_canvas = None
+
         self.is_overlay_active = False
         if hasattr(self, "btn_overlay"):
             self.btn_overlay.config(text="📺 ОВЕРЛЕЙ НА ЭКРАН 1: СКВОЗНОЙ", bg=THEME["accent_amber"], fg="#000000")
@@ -2985,8 +3035,14 @@ class ShakalStudioApp:
         last_t = 0
         while self.running:
             try:
+                # Instant Escape key handling when overlay is active (from any window!)
+                if self.is_overlay_active and (user32.GetAsyncKeyState(0x1B) & 0x8000):
+                    self.root.after(0, self.stop_all_prank_streams)
+                    time.sleep(0.2)
+                    continue
+
                 now = time.time()
-                if now - last_t > 0.45:
+                if now - last_t > 0.35:
                     vk_scr = vk_table.get(self.bind_var.get(), 0x78)
                     vk_vid = vk_table.get(self.v_bind_var.get(), 0x79)
                     if user32.GetAsyncKeyState(vk_scr) & 0x8000:
@@ -2995,15 +3051,15 @@ class ShakalStudioApp:
                     elif user32.GetAsyncKeyState(vk_vid) & 0x8000:
                         last_t = now
                         self.root.after(0, self.toggle_video_recording)
-                    elif user32.GetAsyncKeyState(0x7A) & 0x8000:
+                    elif user32.GetAsyncKeyState(0x7A) & 0x8000: # F11
                         last_t = now
                         self.root.after(0, self.toggle_overlay_screen1)
-                    elif user32.GetAsyncKeyState(0x7B) & 0x8000:
+                    elif user32.GetAsyncKeyState(0x7B) & 0x8000: # F12
                         last_t = now
                         self.root.after(0, self.stop_all_prank_streams)
             except Exception:
                 pass
-            time.sleep(0.04)
+            time.sleep(0.03)
 
     def on_close(self):
         self.running = False

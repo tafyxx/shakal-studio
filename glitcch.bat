@@ -450,8 +450,8 @@ class MotionDropdown(tk.Frame):
             x = self.winfo_rootx()
             y = self.winfo_rooty() + self.winfo_height()
             self.menu.tk_popup(x, y)
-        finally:
-            self.menu.grab_release()
+        except Exception:
+            pass
 
 class MotionSlider:
     def __init__(self, parent, label_text, var, from_, to_, info_text="", is_float=False, res=1, hover_cb=None):
@@ -1341,12 +1341,35 @@ class ShakalStudioApp:
         target = "🛡️ Чит-Проверка: Сбой Windows и Видеокарты"
         if target not in self.custom_presets and "Проверка на читы" in self.custom_presets:
             target = "Проверка на читы"
-        if target in self.custom_presets:
-            self.apply_preset_dict(self.custom_presets[target])
-            self.selected_preset_var.set(target)
-            if hasattr(self, "menu_presets"):
-                self.menu_presets.lbl.config(text=target)
-            self.status_var.set("Пресет Проверка на читы активирован")
+
+        cfg = self.custom_presets.get(target, {
+            "res": NATIVE_H, "q": 95, "pix": 1, "fry": 1.0, "sharp": 1, "rgb": 0, "datamosh": 5,
+            "dialup": 0, "fisheye": 0, "xp_drag": 0, "ads": 0, "ad_alpha": 0, "art": 0, "noise": 2,
+            "matrix": False, "dead": False, "cursor": True, "win_act": False, "anti": False,
+            "bsod": False, "bsod_glitch": False, "scr": False, "scr_extreme": False, "swirl": 0,
+            "invert": False, "solarize": False, "crt": 0, "jitter": 0, "vignette": 0, "vhs_tracking": 0,
+            "bitcrush": 0, "sound": "none", "ghost_windows": 75, "gpu_artifacts": 35,
+            "tdr_crash": True, "audio_stutter": True, "mem_error": True, "mouse_stutter": True
+        })
+
+        self.apply_preset_dict(cfg)
+        self.selected_preset_var.set(target)
+        if hasattr(self, "menu_presets"):
+            self.menu_presets.lbl.config(text=target)
+
+        # Immediate desktop snapshot for ghost window trailing
+        try:
+            raw = ImageGrab.grab().convert("RGB")
+            self._ghost_history = [raw, raw]
+        except Exception:
+            pass
+
+        # Automatically start the overlay if not yet active so prank is LIVE!
+        if not self.is_overlay_active:
+            self.toggle_overlay_screen1()
+
+        ShakalAudioEngine.play("usb_disconnect")
+        self.status_var.set("Пресет Проверка на читы включен и работает на экране!")
 
     def toggle_overlay_screen1(self):
         if self.overlay_window is None or not self.overlay_window.winfo_exists():
@@ -1931,7 +1954,20 @@ class ShakalStudioApp:
         self.screamer_img_var.set(random.random() < 0.25)
         self.sound_choice_var.set(random.choice(["camera", "win_error", "usb_disconnect", "screamer", "screamer_ear_rape", "bass_drop"]))
 
+        if hasattr(self, "scale_master_res"):
+            self.scale_master_res.set(res_v)
+        if hasattr(self, "scale_v_res"):
+            self.scale_v_res.set(res_v)
         self.update_master_res_label()
+        self.update_v_res_label()
+
+        if hasattr(self, "v_fps_var"):
+            self.v_mosh_var.set(d.get("datamosh", 0))
+            self.v_rgb_var.set(d.get("rgb", 0))
+            self.v_fry_var.set(d.get("fry", 1.0))
+            self.v_crt_var.set(d.get("crt", 0))
+            self.v_invert_var.set(d.get("invert", False))
+
         for s in [self.ctrl_q, self.ctrl_pix, self.ctrl_fry, self.ctrl_sharp, self.ctrl_rgb,
                   self.ctrl_datamosh, self.ctrl_swirl, self.ctrl_bitcrush, self.ctrl_crt,
                   self.ctrl_jitter, self.ctrl_vignette, self.ctrl_vhs,
@@ -2444,15 +2480,21 @@ class ShakalStudioApp:
     def on_preset_picked(self, name):
         if name == "Сброс":
             self.apply_preset_dict({
-                "res": 100, "q": 85, "pix": 1, "fry": 1.0, "sharp": 1, "rgb": 0, "datamosh": 0,
-                "dialup": 0, "fisheye": 0, "xp_drag": 0, "ads": 10, "ad_alpha": 90, "art": 0,
+                "res": NATIVE_H, "q": 85, "pix": 1, "fry": 1.0, "sharp": 1, "rgb": 0, "datamosh": 0,
+                "dialup": 0, "fisheye": 0, "xp_drag": 0, "ads": 0, "ad_alpha": 90, "art": 0,
                 "noise": 0, "matrix": False, "dead": False, "cursor": False, "win_act": False,
                 "anti": False, "av_type": "random", "bsod": False, "bsod_glitch": False, "scr": False,
                 "scr_extreme": False, "swirl": 0, "invert": False, "solarize": False, "crt": 0,
-                "jitter": 0, "vignette": 0, "vhs_tracking": 0, "bitcrush": 0, "sound": "camera"
+                "jitter": 0, "vignette": 0, "vhs_tracking": 0, "bitcrush": 0, "sound": "camera",
+                "ghost_windows": 0, "gpu_artifacts": 0
             })
+            self.stop_all_prank_streams()
+            self.status_var.set("Настройки сброшены")
+        elif name in ("🛡️ Чит-Проверка: Сбой Windows и Видеокарты", "Проверка на читы"):
+            self.apply_cheat_check_preset()
         elif name in self.custom_presets:
             self.apply_preset_dict(self.custom_presets[name])
+            self.status_var.set(f"Пресет {name} применен")
 
     def apply_preset_dict(self, d):
         res_v = d.get("res", NATIVE_H)

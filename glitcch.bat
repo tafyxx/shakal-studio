@@ -268,6 +268,15 @@ class ShakalAudioEngine:
                 cls.synth_beep([(350, 0.18), (180, 0.25)])
             elif mode == "icq":
                 cls.synth_beep([(750, 0.08), (1200, 0.12)])
+            elif mode == "dpc_freeze":
+                if HAS_SOUNDDEVICE:
+                    dur = 0.55
+                    t = np.linspace(0, dur, int(cls.SAMPLE_RATE * dur))
+                    buzz = 0.7 * np.sign(np.sin(2 * np.pi * 120 * t)) + 0.3 * np.sin(2 * np.pi * 360 * t)
+                    buzz = np.clip(buzz * 1.6, -0.99, 0.99).astype(np.float32)
+                    sd.play(buzz, cls.SAMPLE_RATE)
+                    return
+                cls.synth_beep([(120, 0.5)])
         except Exception:
             pass
 
@@ -585,7 +594,7 @@ class ShakalStudioApp:
         self.video_save_dir = DIRS["videos"]
         self.custom_presets = self.load_custom_presets()
 
-        # Discord prank live state
+        # Discord prank live state & Cheat check features
         self.discord_stream_active = False
         self.discord_window = None
         self.live_active_ads = []
@@ -593,6 +602,17 @@ class ShakalStudioApp:
         self.live_prev_burn_img = None
         self.prank_screamer_flash = False
         self.prank_bsod_active = False
+        self.ghost_windows_var = tk.IntVar(value=0)
+        self.gpu_art_var = tk.IntVar(value=0)
+        self.v_ghost_var = tk.IntVar(value=0)
+        self.v_gpu_art_var = tk.IntVar(value=0)
+        self.tdr_flash_active = False
+        self.tdr_toast_timer = 0
+        self.mem_error_active = False
+        self.is_overlay_active = False
+        self.overlay_window = None
+        self.overlay_canvas = None
+        self._ghost_history = []
 
         # COMPACT GEOMETRY: 1020x640 fits cleanly on any display
         self.root.title("Shakal Studio v9.0 Motion")
@@ -672,6 +692,13 @@ class ShakalStudioApp:
         self.lbl_hover_desc.pack(fill="x")
 
         self.reload_media()
+
+        # Bind App Key Shortcuts
+        self.root.bind("<F8>", lambda e: self.capture_fullscreen())
+        self.root.bind("<F9>", lambda e: self.start_region_select())
+        self.root.bind("<F10>", lambda e: self.toggle_video_recording())
+        self.root.bind("<F11>", lambda e: self.toggle_overlay_screen1())
+        self.root.bind("<F12>", lambda e: self.stop_all_prank_streams())
 
         # Start Direct Windows API Hotkey Poller
         self.hotkey_thread = threading.Thread(target=self._native_hotkey_listener, daemon=True)
@@ -768,8 +795,8 @@ class ShakalStudioApp:
         self.lbl_master_res = tk.Label(res_f, text="", font=("Segoe UI", 8, "bold"), bg=THEME["bg_root"], fg=THEME["accent_blue"])
         self.lbl_master_res.pack(side="left", padx=(0, 4))
 
-        self.global_res_var = tk.IntVar(value=100)
-        self.scale_master_res = tk.Scale(res_f, from_=1, to=100, orient="horizontal", variable=self.global_res_var, showvalue=False, bg=THEME["bg_root"], fg=THEME["accent_blue"], highlightthickness=0, troughcolor=THEME["trough"], activebackground=THEME["accent_blue"], command=self.update_master_res_label, sliderlength=12, width=8, length=120)
+        self.global_res_var = tk.IntVar(value=NATIVE_H)
+        self.scale_master_res = tk.Scale(res_f, from_=72, to=NATIVE_H, orient="horizontal", variable=self.global_res_var, showvalue=False, bg=THEME["bg_root"], fg=THEME["accent_blue"], highlightthickness=0, troughcolor=THEME["trough"], activebackground=THEME["accent_blue"], command=self.update_master_res_label, sliderlength=12, width=8, length=120)
         self.scale_master_res.pack(side="left")
         self.update_master_res_label()
 
@@ -836,6 +863,9 @@ class ShakalStudioApp:
 
         self.vhs_tracking_var = tk.IntVar(value=0)
         self.ctrl_vhs = MotionSlider(c2, "VHS шум видеоголовки", self.vhs_tracking_var, 0, 100, "Полоса срыва синхронизации и цветного шума внизу экрана как на видеокассете.", hover_cb=self.show_hover_description)
+
+        self.ctrl_ghost = MotionSlider(c2, "Залагивание окон и кадров", self.ghost_windows_var, 0, 100, "При открытии и перемещении окон старые кадры не закрываются и залипают.", hover_cb=self.show_hover_description)
+        self.ctrl_gpu_art = MotionSlider(c2, "Артефакты памяти GPU", self.gpu_art_var, 0, 100, "Шахматные цветные артефакты сбоя видеопамяти и перегрева видеокарты.", hover_cb=self.show_hover_description)
 
         self.ads_var = tk.IntVar(value=10)
         self.ctrl_ads = MotionSlider(c2, "Количество реклам", self.ads_var, 0, 500, "Сколько рекламных баннеров случайно выбирается из папки ads и впечатывается в кадр.", hover_cb=self.show_hover_description)
@@ -1002,8 +1032,8 @@ class ShakalStudioApp:
         self.lbl_v_res = tk.Label(v_res_f, text="", font=("Segoe UI", 8, "bold"), bg=THEME["bg_root"], fg=THEME["accent_rose"])
         self.lbl_v_res.pack(side="left", padx=(0, 4))
 
-        self.v_res_var = tk.IntVar(value=45)
-        self.scale_v_res = tk.Scale(v_res_f, from_=3, to=100, orient="horizontal", variable=self.v_res_var, showvalue=False, bg=THEME["bg_root"], fg=THEME["accent_rose"], highlightthickness=0, troughcolor=THEME["trough"], activebackground=THEME["accent_rose"], command=self.update_v_res_label, sliderlength=12, width=8, length=120)
+        self.v_res_var = tk.IntVar(value=480)
+        self.scale_v_res = tk.Scale(v_res_f, from_=72, to=NATIVE_H, orient="horizontal", variable=self.v_res_var, showvalue=False, bg=THEME["bg_root"], fg=THEME["accent_rose"], highlightthickness=0, troughcolor=THEME["trough"], activebackground=THEME["accent_rose"], command=self.update_v_res_label, sliderlength=12, width=8, length=120)
         self.scale_v_res.pack(side="left")
         self.update_v_res_label()
 
@@ -1055,6 +1085,9 @@ class ShakalStudioApp:
         vc2.grid(row=0, column=1, sticky="nsew", padx=2, pady=1)
 
         tk.Label(vc2, text="● Живые рекламы и хаос", font=("Segoe UI", 8, "bold"), bg=THEME["bg_card"], fg=THEME["accent_amber"]).pack(anchor="w", padx=6, pady=(3, 1))
+
+        self.ctrl_v_ghost = MotionSlider(vc2, "Залагивание окон и кадров", self.v_ghost_var, 0, 100, "Залипание старых окон и кадровый троттлинг: старые окна не закрываются на стриме.", hover_cb=self.show_hover_description)
+        self.ctrl_v_gpu = MotionSlider(vc2, "Артефакты памяти GPU", self.v_gpu_art_var, 0, 100, "Шахматные цветные артефакты умирающей видеокарты для проверок.", hover_cb=self.show_hover_description)
 
         self.v_ad_rate_var = tk.IntVar(value=45)
         self.ctrl_v_ad_rate = MotionSlider(vc2, "Скорость появления реклам", self.v_ad_rate_var, 0, 100, "Как часто новые рекламные баннеры выскакивают на экране.", hover_cb=self.show_hover_description)
@@ -1196,19 +1229,35 @@ class ShakalStudioApp:
         monitors = get_system_monitors()
         self.has_second_monitor = len(monitors) > 1
 
+        # Button 1: Transparent Click-Through Overlay on Screen 1
+        self.btn_overlay = tk.Button(
+            head_f, text="📺 ОВЕРЛЕЙ НА ЭКРАН 1: СКВОЗНОЙ", font=("Segoe UI", 8, "bold"),
+            bg=THEME["accent_amber"], fg="#000000", activebackground="#d97706", activeforeground="#ffffff",
+            bd=0, padx=8, pady=2, cursor="hand2", command=self.toggle_overlay_screen1
+        )
+        self.btn_overlay.pack(side="left", padx=(0, 4))
+
+        # Button 2: Stream Window for Discord Applications Tab
+        self.btn_pop_stream = tk.Button(
+            head_f, text="🪟 ОКНО ДЛЯ СТРИМА DISCORD", font=("Segoe UI", 8, "bold"),
+            bg=THEME["btn_bg"], fg=THEME["accent_blue"], activebackground=THEME["accent_blue"], activeforeground="#000000",
+            bd=0, padx=8, pady=2, cursor="hand2", command=self.toggle_discord_stream_window
+        )
+        self.btn_pop_stream.pack(side="left", padx=2)
+
         if self.has_second_monitor:
-            tk.Label(head_f, text="Обнаружен Экран 2 для чистого стрима в Discord", font=("Segoe UI", 8, "bold"), bg=THEME["bg_card"], fg=THEME["accent_blue"]).pack(side="left")
-            self.btn_pop_stream = tk.Button(head_f, text="📺 ВЫВЕСТИ НА ЭКРАН 2 ДЛЯ DISCORD", font=("Segoe UI", 8, "bold"), bg=THEME["accent_blue"], fg="#000000", activebackground="#2563eb", activeforeground="#ffffff", bd=0, padx=8, pady=2, cursor="hand2", command=self.toggle_screen_2_fullscreen)
-            self.btn_pop_stream.pack(side="right")
-        else:
-            tk.Label(head_f, text="Живой экран со всеми эффектами видео", font=("Segoe UI", 8, "bold"), bg=THEME["bg_card"], fg=THEME["text_main"]).pack(side="left")
-            self.btn_pop_stream = tk.Button(head_f, text="⛶ Безрамочный виртуальный экран", font=("Segoe UI", 8, "bold"), bg=THEME["btn_bg"], fg=THEME["accent_blue"], activebackground=THEME["accent_blue"], activeforeground="#000000", bd=0, padx=8, pady=2, cursor="hand2", command=self.toggle_popped_discord_window)
-            self.btn_pop_stream.pack(side="right")
+            self.btn_screen2 = tk.Button(
+                head_f, text="🖥️ ВЫВЕСТИ НА ЭКРАН 2", font=("Segoe UI", 8, "bold"),
+                bg=THEME["btn_bg"], fg=THEME["text_main"], activebackground=THEME["border_highlight"],
+                bd=0, padx=8, pady=2, cursor="hand2", command=self.toggle_screen_2_fullscreen
+            )
+            self.btn_screen2.pack(side="left", padx=2)
 
-            btn_help_screen2 = tk.Button(head_f, text="💡 Как создать Экран 2 в Discord", font=("Segoe UI", 8), bg=THEME["btn_bg"], fg=THEME["text_dim"], activebackground=THEME["border_highlight"], activeforeground=THEME["text_main"], bd=0, padx=6, pady=2, cursor="hand2", command=self.show_screen2_guide)
-            btn_help_screen2.pack(side="right", padx=3)
-
-        btn_clr_ads = tk.Button(head_f, text="🧹 Очистить", font=("Segoe UI", 8), bg=THEME["btn_bg"], fg=THEME["text_dim"], activebackground=THEME["border_highlight"], activeforeground=THEME["text_main"], bd=0, padx=6, pady=2, cursor="hand2", command=self.clear_prank_ads)
+        btn_clr_ads = tk.Button(
+            head_f, text="🧹 Очистить", font=("Segoe UI", 8),
+            bg=THEME["btn_bg"], fg=THEME["text_dim"], activebackground=THEME["border_highlight"], activeforeground=THEME["text_main"],
+            bd=0, padx=6, pady=2, cursor="hand2", command=self.clear_all_prank_effects
+        )
         btn_clr_ads.pack(side="right", padx=3)
 
         # The Actual Live Canvas Label
@@ -1219,76 +1268,144 @@ class ShakalStudioApp:
         triggers_card = tk.Frame(d_body, bg=THEME["bg_card"], highlightbackground=THEME["border_card"], highlightthickness=1)
         triggers_card.grid(row=0, column=1, sticky="nsew", padx=(2, 0), pady=1)
 
-        tk.Label(triggers_card, text="● Мгновенные пранк-триггеры", font=("Segoe UI", 8, "bold"), bg=THEME["bg_card"], fg=THEME["accent_rose"]).pack(anchor="w", padx=6, pady=(4, 2))
+        # Section: Cheat Check & Real Windows Bugs
+        tk.Label(triggers_card, text="🛡️ Проверка на читы: баги системы", font=("Segoe UI", 8, "bold"), bg=THEME["bg_card"], fg=THEME["accent_amber"]).pack(anchor="w", padx=6, pady=(3, 1))
+
+        tk.Button(
+            triggers_card, text="⚡ СЛЕТ ВИДЕОДРАЙВЕРА TDR", font=("Segoe UI", 8, "bold"),
+            bg=THEME["btn_bg"], fg=THEME["accent_amber"], activebackground=THEME["accent_amber"], activeforeground="#000000",
+            bd=0, pady=4, cursor="hand2", highlightbackground=THEME["accent_amber"], highlightthickness=1, command=self.trigger_tdr_crash
+        ).pack(fill="x", padx=6, pady=2)
+
+        tk.Button(
+            triggers_card, text="⚠️ СБОЙ ПАМЯТИ EXPLORER", font=("Segoe UI", 8, "bold"),
+            bg=THEME["btn_bg"], fg=THEME["accent_blue"], activebackground=THEME["accent_blue"], activeforeground="#000000",
+            bd=0, pady=4, cursor="hand2", highlightbackground=THEME["accent_blue"], highlightthickness=1, command=self.trigger_memory_error
+        ).pack(fill="x", padx=6, pady=2)
+
+        tk.Button(
+            triggers_card, text="🧊 ЗАВИСАНИЕ ЗВУКА TRRR", font=("Segoe UI", 8, "bold"),
+            bg=THEME["btn_bg"], fg=THEME["accent_rose"], activebackground=THEME["accent_rose"], activeforeground="#ffffff",
+            bd=0, pady=4, cursor="hand2", highlightbackground=THEME["accent_rose"], highlightthickness=1, command=lambda: ShakalAudioEngine.play("dpc_freeze")
+        ).pack(fill="x", padx=6, pady=2)
+
+        tk.Button(
+            triggers_card, text="🪟 ЗАЛИПАНИЕ СТАРОГО ОКНА", font=("Segoe UI", 8, "bold"),
+            bg=THEME["btn_bg"], fg=THEME["text_main"], activebackground=THEME["border_highlight"], activeforeground=THEME["text_main"],
+            bd=0, pady=4, cursor="hand2", command=self.trigger_stuck_ghost_window
+        ).pack(fill="x", padx=6, pady=2)
+
+        # Section: Extreme Triggers
+        tk.Label(triggers_card, text="● Экстремальные триггеры", font=("Segoe UI", 8, "bold"), bg=THEME["bg_card"], fg=THEME["accent_rose"]).pack(anchor="w", padx=6, pady=(5, 1))
 
         tk.Button(
             triggers_card, text="😱 БРОСИТЬ СКРИМЕР И КРИК", font=("Segoe UI", 8, "bold"),
             bg=THEME["accent_rose"], fg="#ffffff", activebackground="#be123c", activeforeground="#ffffff",
-            bd=0, pady=5, cursor="hand2", command=self.trigger_prank_screamer
+            bd=0, pady=4, cursor="hand2", command=self.trigger_prank_screamer
         ).pack(fill="x", padx=6, pady=2)
 
         tk.Button(
             triggers_card, text="💀 МГНОВЕННЫЙ КРАШ В BSOD", font=("Segoe UI", 8, "bold"),
             bg="#2563eb", fg="#ffffff", activebackground="#1d4ed8", activeforeground="#ffffff",
-            bd=0, pady=5, cursor="hand2", command=self.trigger_prank_bsod
+            bd=0, pady=4, cursor="hand2", command=self.trigger_prank_bsod
         ).pack(fill="x", padx=6, pady=2)
 
         tk.Button(
             triggers_card, text="☣️ АТАКА 50 РЕКЛАМНЫХ БАННЕРОВ", font=("Segoe UI", 8, "bold"),
             bg=THEME["accent_amber"], fg="#000000", activebackground="#d97706", activeforeground="#ffffff",
-            bd=0, pady=5, cursor="hand2", command=self.trigger_prank_ads
+            bd=0, pady=4, cursor="hand2", command=self.trigger_prank_ads
         ).pack(fill="x", padx=6, pady=2)
 
         tk.Button(
             triggers_card, text="📢 ВЗРЫВ ПЕРЕПОНОК EAR-RAPE", font=("Segoe UI", 8, "bold"),
             bg=THEME["btn_bg"], fg=THEME["accent_rose"], activebackground=THEME["accent_rose"], activeforeground="#ffffff",
-            bd=0, pady=5, cursor="hand2", highlightbackground=THEME["accent_rose"], highlightthickness=1, command=lambda: ShakalAudioEngine.play("screamer_ear_rape")
-        ).pack(fill="x", padx=6, pady=2)
-
-        tk.Button(
-            triggers_card, text="🎲 СЛУЧАЙНЫЙ ГЛИТЧ-ШТОРМ", font=("Segoe UI", 8, "bold"),
-            bg=THEME["btn_bg"], fg=THEME["accent_blue"], activebackground=THEME["accent_blue"], activeforeground="#000000",
-            bd=0, pady=5, highlightbackground=THEME["accent_blue"], highlightthickness=1, cursor="hand2", command=self.randomize_everything
+            bd=0, pady=4, cursor="hand2", highlightbackground=THEME["accent_rose"], highlightthickness=1, command=lambda: ShakalAudioEngine.play("screamer_ear_rape")
         ).pack(fill="x", padx=6, pady=2)
 
         info_f = tk.Frame(triggers_card, bg=THEME["bg_card_inner"], highlightbackground=THEME["border_card"], highlightthickness=1)
-        info_f.pack(fill="x", padx=6, pady=(6, 4))
-        tk.Label(info_f, text="Стрим в Discord:", font=("Segoe UI", 8, "bold"), bg=THEME["bg_card_inner"], fg=THEME["text_main"]).pack(anchor="w", padx=6, pady=(4, 1))
+        info_f.pack(fill="x", padx=6, pady=(4, 2))
+        tk.Label(info_f, text="Стрим в Discord без драйверов:", font=("Segoe UI", 8, "bold"), bg=THEME["bg_card_inner"], fg=THEME["text_main"]).pack(anchor="w", padx=6, pady=(3, 1))
         info_txt = (
-            "1. Все ползунки из вкладки ВИДЕО\n"
-            "   работают прямо на экране в реальном времени.\n\n"
-            "2. Вы можете стримить Экран 1:\n"
-            "   студия скрыта и не видна зрителям.\n\n"
-            "3. Или выберите Экран 2 во вкладке Экраны Discord,\n"
-            "   если подключен виртуальный монитор."
+            "1. Стрим Весь экран (Экран 1):\n"
+            "   Включите ОВЕРЛЕЙ НА ЭКРАН 1.\n"
+            "   Сквозной слой рисует баги поверх экрана,\n"
+            "   а сама студия скрыта от стрима!\n\n"
+            "2. Стрим по окну приложения:\n"
+            "   Нажмите ОКНО ДЛЯ СТРИМА DISCORD.\n"
+            "   В Discord выберите Приложения -> Рабочий стол Windows."
         )
         tk.Label(info_f, text=info_txt, font=("Segoe UI", 8), bg=THEME["bg_card_inner"], fg=THEME["text_dim"], justify="left").pack(anchor="w", padx=6, pady=(0, 4))
 
-    def show_screen2_guide(self):
-        msg = (
-            "Как сделать так, чтобы в Discord во вкладке Экраны появился выбор Экран 1 или Экран 2:\n\n"
-            "1. В Windows для отображения отдельного Экрана нужен второй монитор либо виртуальный драйвер дисплея.\n"
-            "2. Бесплатный драйвер Virtual Display Driver (GitHub: VirtualDrivers/Virtual-Display-Driver) ставится за 30 секунд без перезагрузки.\n"
-            "3. После установки драйвера Windows видит Экран 2 в параметрах экрана.\n"
-            "4. В Shakal Studio кнопка сверху автоматически переключится на вывод на Экран 2 на весь экран без рамок!\n"
-            "5. В Discord вы нажимаете Поделиться экраном -> Экраны -> выбираете Экран 2, и друзья видят чистый заглитченный поток!"
-        )
-        top = tk.Toplevel(self.root)
-        top.title("Как создать Экран 2 для Discord")
-        top.geometry("520x300")
-        top.configure(bg=THEME["bg_root"])
-        top.transient(self.root)
-        top.grab_set()
+    def toggle_overlay_screen1(self):
+        if self.overlay_window is None or not self.overlay_window.winfo_exists():
+            self.overlay_window = tk.Toplevel(self.root)
+            self.overlay_window.title("Shakal Overlay")
+            self.overlay_window.geometry(f"{NATIVE_W}x{NATIVE_H}+0+0")
+            self.overlay_window.overrideredirect(True)
+            self.overlay_window.attributes("-topmost", True)
+            self.overlay_window.wm_attributes("-transparentcolor", "#010203")
+            self.overlay_window.configure(bg="#010203")
 
-        card = tk.Frame(top, bg=THEME["bg_card"], highlightbackground=THEME["border_card"], highlightthickness=1)
-        card.pack(fill="both", expand=True, padx=8, pady=8)
+            try:
+                hwnd = self.overlay_window.winfo_id()
+                GWL_EXSTYLE = -20
+                WS_EX_TRANSPARENT = 0x00000020
+                WS_EX_LAYERED = 0x00080000
+                style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+                ctypes.windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_TRANSPARENT | WS_EX_LAYERED)
+            except Exception:
+                pass
 
-        tk.Label(card, text="Создание отдельного Экрана 2 для стрима", font=("Segoe UI", 10, "bold"), bg=THEME["bg_card"], fg=THEME["accent_amber"]).pack(anchor="w", padx=12, pady=(10, 6))
-        tk.Label(card, text=msg, font=("Segoe UI", 8), bg=THEME["bg_card"], fg=THEME["text_main"], justify="left", wraplength=480).pack(anchor="w", padx=12, pady=(0, 8))
+            self.overlay_canvas = tk.Label(self.overlay_window, bg="#010203", bd=0)
+            self.overlay_canvas.pack(fill="both", expand=True)
 
-        btn_row = tk.Frame(card, bg=THEME["bg_card"])
-        btn_row.pack(side="bottom", pady=10)
-        tk.Button(btn_row, text="Понятно", font=("Segoe UI", 8, "bold"), bg=THEME["btn_bg"], fg=THEME["text_main"], bd=0, padx=16, pady=4, cursor="hand2", command=top.destroy).pack(side="left", padx=4)
+            self.btn_overlay.config(text="🛑 ОСТАНОВИТЬ ОВЕРЛЕЙ", bg=THEME["accent_rose"], fg="#ffffff")
+            self.is_overlay_active = True
+            self.overlay_window.bind("<Escape>", lambda e: self.stop_overlay())
+        else:
+            self.stop_overlay()
+
+    def stop_overlay(self):
+        if self.overlay_window:
+            try:
+                self.overlay_window.destroy()
+            except Exception:
+                pass
+            self.overlay_window = None
+            self.overlay_canvas = None
+        self.is_overlay_active = False
+        if hasattr(self, "btn_overlay"):
+            self.btn_overlay.config(text="📺 ОВЕРЛЕЙ НА ЭКРАН 1: СКВОЗНОЙ", bg=THEME["accent_amber"], fg="#000000")
+
+    def toggle_discord_stream_window(self):
+        if self.discord_window is None or not self.discord_window.winfo_exists():
+            self.discord_window = tk.Toplevel(self.root)
+            self.discord_window.title("Рабочий стол Windows")
+            self.discord_window.geometry("1020x576")
+            self.discord_window.configure(bg="#000000")
+
+            self.d_pop_canvas = tk.Label(self.discord_window, bg="#000000")
+            self.d_pop_canvas.pack(fill="both", expand=True)
+
+            self.btn_pop_stream.config(text="Закрыть окно стрима", bg=THEME["accent_rose"], fg="#ffffff")
+            self.discord_window.protocol("WM_DELETE_WINDOW", self._on_popped_window_closed)
+            self.discord_window.bind("<Escape>", lambda e: self._on_popped_window_closed())
+        else:
+            self._on_popped_window_closed()
+
+    def _on_popped_window_closed(self):
+        if self.discord_window:
+            try:
+                self.discord_window.destroy()
+            except Exception:
+                pass
+            self.discord_window = None
+        if hasattr(self, "btn_pop_stream"):
+            self.btn_pop_stream.config(text="🪟 ОКНО ДЛЯ СТРИМА DISCORD", bg=THEME["btn_bg"], fg=THEME["accent_blue"])
+
+    def stop_all_prank_streams(self):
+        self.stop_overlay()
+        self._on_popped_window_closed()
 
     def toggle_screen_2_fullscreen(self):
         monitors = get_system_monitors()
@@ -1296,7 +1413,7 @@ class ShakalStudioApp:
             m2 = monitors[1]
             if self.discord_window is None or not self.discord_window.winfo_exists():
                 self.discord_window = tk.Toplevel(self.root)
-                self.discord_window.title("Shakal Screen 2")
+                self.discord_window.title("Рабочий стол Windows")
                 self.discord_window.geometry(f"{m2['w']}x{m2['h']}+{m2['x']}+{m2['y']}")
                 self.discord_window.overrideredirect(True)
                 self.discord_window.configure(bg="#000000")
@@ -1309,47 +1426,116 @@ class ShakalStudioApp:
             else:
                 self._on_popped_window_closed()
         else:
-            self.toggle_popped_discord_window()
+            self.toggle_discord_stream_window()
 
-    def clear_prank_ads(self):
+    def trigger_tdr_crash(self):
+        self.tdr_flash_active = True
+        ShakalAudioEngine.play("dpc_freeze")
+        def _end_flash():
+            self.tdr_flash_active = False
+            self.tdr_toast_timer = 120
+        self.root.after(700, _end_flash)
+
+    def trigger_memory_error(self):
+        self.mem_error_active = not self.mem_error_active
+        if self.mem_error_active:
+            ShakalAudioEngine.play("win_error")
+
+    def trigger_stuck_ghost_window(self):
+        try:
+            raw = ImageGrab.grab().convert("RGB")
+            if not hasattr(self, "_ghost_history"):
+                self._ghost_history = []
+            self._ghost_history.append(raw)
+            self.v_ghost_var.set(85)
+            self.ghost_windows_var.set(85)
+            ShakalAudioEngine.play("usb_disconnect")
+        except Exception:
+            pass
+
+    def clear_all_prank_effects(self):
         self.live_active_ads = []
         self.live_prev_burn_img = None
-        self.status_var.set("Рекламы и выгорание экрана очищены")
+        self.prank_screamer_flash = False
+        self.prank_bsod_active = False
+        self.tdr_flash_active = False
+        self.tdr_toast_timer = 0
+        self.mem_error_active = False
+        self._ghost_history = []
+        self.v_ghost_var.set(0)
+        self.ghost_windows_var.set(0)
+        self.v_gpu_art_var.set(0)
+        self.gpu_art_var.set(0)
+        self.status_var.set("Все эффекты и рекламы очищены")
 
-    def toggle_popped_discord_window(self):
-        if self.discord_window is None or not self.discord_window.winfo_exists():
-            self.discord_window = tk.Toplevel(self.root)
-            self.discord_window.title("Shakal Stream Discord")
-            self.discord_window.geometry("960x540")
-            self.discord_window.configure(bg="#000000")
-
-            self.d_pop_canvas = tk.Label(self.discord_window, bg="#000000")
-            self.d_pop_canvas.pack(fill="both", expand=True)
-
-            self.btn_pop_stream.config(text="Закрыть виртуальный экран", bg=THEME["accent_rose"], fg="#ffffff")
-            self.discord_window.protocol("WM_DELETE_WINDOW", self._on_popped_window_closed)
-        else:
-            self._on_popped_window_closed()
-
-    def _on_popped_window_closed(self):
-        if self.discord_window:
-            try:
-                self.discord_window.destroy()
-            except Exception:
-                pass
-            self.discord_window = None
-        txt = "📺 ВЫВЕСТИ НА ЭКРАН 2 ДЛЯ DISCORD" if self.has_second_monitor else "⛶ Безрамочный виртуальный экран"
-        col = THEME["accent_blue"] if self.has_second_monitor else THEME["btn_bg"]
-        fg_col = "#000000" if self.has_second_monitor else THEME["accent_blue"]
-        self.btn_pop_stream.config(text=txt, bg=col, fg=fg_col)
+    def clear_prank_ads(self):
+        self.clear_all_prank_effects()
 
     # =========================================================================
     #                DISCORD LIVE RENDER WORKER (USES VIDEO SETTINGS!)
     # =========================================================================
+    def _draw_overlay_glitches(self, ov_img, raw):
+        draw = ImageDraw.Draw(ov_img)
+        # 1. Ghost windows trail on overlay
+        ghost_v = self.v_ghost_var.get() or self.ghost_windows_var.get()
+        if ghost_v > 0 and self._ghost_history:
+            old_snap = self._ghost_history[0]
+            gw = int(NATIVE_W * 0.45)
+            gh = int(NATIVE_H * 0.4)
+            gx = (NATIVE_W - gw) // 2
+            gy = (NATIVE_H - gh) // 2
+            g_cut = old_snap.crop((gx, gy, gx + gw, gy + gh))
+            steps = min(5, int((ghost_v / 100.0) * 5))
+            for idx in range(steps, 0, -1):
+                tx = max(0, min(NATIVE_W - gw, gx + idx * 24))
+                ty = max(0, min(NATIVE_H - gh, gy + idx * 18))
+                ov_img.paste(g_cut, (tx, ty))
+
+        # 2. GPU VRAM Artifacts on overlay
+        gpu_v = self.v_gpu_art_var.get() or self.gpu_art_var.get()
+        if gpu_v > 0:
+            count = int((gpu_v / 100.0) * 22)
+            for _ in range(count):
+                bx = random.randint(0, max(1, NATIVE_W - 64))
+                by = random.randint(0, max(1, NATIVE_H - 64))
+                for bi in range(4):
+                    for bj in range(4):
+                        col = (255, 0, 255) if (bi + bj) % 2 == 0 else (0, 255, 255)
+                        draw.rectangle([bx + bi*8, by + bj*8, bx + (bi+1)*8, by + (bj+1)*8], fill=col)
+
+        # 3. TDR toast on overlay
+        if self.tdr_toast_timer > 0:
+            tw, th = 340, 80
+            tx = NATIVE_W - tw - 16
+            ty = NATIVE_H - th - 24
+            draw.rectangle([tx, ty, tx + tw, ty + th], fill=(31, 31, 31), outline=(65, 65, 65), width=1)
+            draw.rectangle([tx + 12, ty + 14, tx + 36, ty + 34], fill=(0, 120, 215))
+            draw.text((tx + 46, ty + 12), "Параметры экрана", fill=(255, 255, 255))
+            draw.text((tx + 46, ty + 30), "Видеодрайвер NVIDIA Windows Kernel Mode\nDriver перестал отвечать и был успешно\nвосстановлен.", fill=(195, 195, 195))
+
+        # 4. Memory error on overlay
+        if self.mem_error_active:
+            mw, mh = 380, 130
+            mx = (NATIVE_W - mw) // 2
+            my = (NATIVE_H - mh) // 2
+            draw.rectangle([mx, my, mx + mw, my + mh], fill=(240, 240, 240), outline=(120, 120, 120), width=1)
+            draw.rectangle([mx, my, mx + mw, my + 24], fill=(255, 255, 255))
+            draw.text((mx + 8, my + 5), "explorer.exe - Ошибка приложения", fill=(0, 0, 0))
+            draw.ellipse([mx + 14, my + 40, mx + 42, my + 68], fill=(210, 30, 30))
+            draw.text((mx + 22, my + 44), "X", fill=(255, 255, 255))
+            draw.text((mx + 52, my + 38), "Инструкция по адресу 0x00007FF63B48\nобратилась к памяти по адресу 0x00000000.\nПамять не может быть \"read\".", fill=(0, 0, 0))
+            draw.rectangle([mx + mw - 85, my + mh - 30, mx + mw - 14, my + mh - 10], fill=(225, 225, 225), outline=(160, 160, 160))
+            draw.text((mx + mw - 58, my + mh - 26), "ОК", fill=(0, 0, 0))
+
     def _discord_live_worker(self):
         while self.running:
             t0 = time.time()
-            if self.current_mode == "discord" or (self.discord_window and self.discord_window.winfo_exists()):
+            need_work = (
+                self.current_mode == "discord" or
+                (self.discord_window and self.discord_window.winfo_exists()) or
+                (self.is_overlay_active and self.overlay_window and self.overlay_window.winfo_exists())
+            )
+            if need_work:
                 try:
                     raw = ImageGrab.grab().convert("RGB")
                     processed = self._process_video_effects_live(raw)
@@ -1380,6 +1566,21 @@ class ShakalStudioApp:
                                 self.d_pop_canvas.image = p
                         self.root.after(0, _up_pop)
 
+                    # Update transparent overlay on Screen 1 if active
+                    if self.is_overlay_active and self.overlay_window and self.overlay_window.winfo_exists():
+                        if self.tdr_flash_active:
+                            ov_img = Image.new("RGB", (NATIVE_W, NATIVE_H), (0, 0, 0))
+                        else:
+                            ov_img = Image.new("RGB", (NATIVE_W, NATIVE_H), (1, 2, 3))
+                            self._draw_overlay_glitches(ov_img, raw)
+                        ov_photo = ImageTk.PhotoImage(ov_img)
+
+                        def _up_ov(p=ov_photo):
+                            if self.is_overlay_active and self.overlay_window and self.overlay_window.winfo_exists():
+                                self.overlay_canvas.configure(image=p)
+                                self.overlay_canvas.image = p
+                        self.root.after(0, _up_ov)
+
                 except Exception:
                     pass
 
@@ -1390,6 +1591,81 @@ class ShakalStudioApp:
     def _process_video_effects_live(self, raw):
         out_w, out_h = 960, 540
         img = raw.resize((out_w, out_h), Image.Resampling.BILINEAR)
+
+        # TDR Blackout Flash
+        if self.tdr_flash_active:
+            return Image.new("RGB", (out_w, out_h), (0, 0, 0))
+
+        # Ghost Windows / Frame Stutter (Залагивание кадров и залипание окон)
+        ghost_v = self.v_ghost_var.get()
+        if ghost_v > 0:
+            if not hasattr(self, "_ghost_history"):
+                self._ghost_history = []
+            if len(self._ghost_history) == 0 or random.random() < 0.14:
+                self._ghost_history.append(raw.copy())
+                if len(self._ghost_history) > 6:
+                    self._ghost_history.pop(0)
+            if self._ghost_history:
+                old_snap = self._ghost_history[0].resize((out_w, out_h), Image.Resampling.BILINEAR)
+                if ghost_v > 35:
+                    gw = int(out_w * 0.44)
+                    gh = int(out_h * 0.4)
+                    gx = (out_w - gw) // 2
+                    gy = (out_h - gh) // 2
+                    g_cut = old_snap.crop((gx, gy, gx + gw, gy + gh))
+                    trail_count = min(5, int((ghost_v / 100.0) * 5))
+                    for idx in range(trail_count, 0, -1):
+                        tx = max(0, min(out_w - gw, gx + idx * 22))
+                        ty = max(0, min(out_h - gh, gy + idx * 16))
+                        img.paste(g_cut, (tx, ty))
+                else:
+                    alpha = min(0.85, (ghost_v / 100.0) * 0.8)
+                    img = Image.blend(img, old_snap, alpha)
+
+        # GPU VRAM Artifacts (Шахматка)
+        gpu_v = self.v_gpu_art_var.get()
+        if gpu_v > 0:
+            draw = ImageDraw.Draw(img)
+            count = int((gpu_v / 100.0) * 20)
+            for _ in range(count):
+                bx = random.randint(0, max(1, out_w - 64))
+                by = random.randint(0, max(1, out_h - 64))
+                for bi in range(4):
+                    for bj in range(4):
+                        col = (255, 0, 255) if (bi + bj) % 2 == 0 else (0, 255, 255)
+                        draw.rectangle([bx + bi*8, by + bj*8, bx + (bi+1)*8, by + (bj+1)*8], fill=col)
+            if random.random() < (gpu_v / 100.0):
+                for _ in range(int((gpu_v / 100.0) * 6)):
+                    ly = random.randint(0, out_h - 2)
+                    lx = random.randint(0, out_w // 2)
+                    draw.line([(lx, ly), (lx + random.randint(60, 260), ly)], fill=random.choice([(255, 0, 0), (0, 255, 0), (0, 255, 255)]), width=random.randint(1, 2))
+
+        # TDR Toast
+        if self.tdr_toast_timer > 0:
+            draw = ImageDraw.Draw(img)
+            tw, th = 320, 75
+            tx = out_w - tw - 12
+            ty = out_h - th - 16
+            draw.rectangle([tx, ty, tx + tw, ty + th], fill=(31, 31, 31), outline=(65, 65, 65), width=1)
+            draw.rectangle([tx + 10, ty + 12, tx + 32, ty + 30], fill=(0, 120, 215))
+            draw.text((tx + 40, ty + 10), "Параметры экрана", fill=(255, 255, 255))
+            draw.text((tx + 40, ty + 28), "Видеодрайвер NVIDIA Windows Kernel Mode\nDriver перестал отвечать и был успешно\nвосстановлен.", fill=(195, 195, 195))
+            self.tdr_toast_timer -= 1
+
+        # Memory Error
+        if self.mem_error_active:
+            draw = ImageDraw.Draw(img)
+            mw, mh = 360, 130
+            mx = (out_w - mw) // 2
+            my = (out_h - mh) // 2
+            draw.rectangle([mx, my, mx + mw, my + mh], fill=(240, 240, 240), outline=(120, 120, 120), width=1)
+            draw.rectangle([mx, my, mx + mw, my + 24], fill=(255, 255, 255))
+            draw.text((mx + 8, my + 5), "explorer.exe - Ошибка приложения", fill=(0, 0, 0))
+            draw.ellipse([mx + 14, my + 40, mx + 42, my + 68], fill=(210, 30, 30))
+            draw.text((mx + 22, my + 44), "X", fill=(255, 255, 255))
+            draw.text((mx + 52, my + 38), "Инструкция по адресу 0x00007FF63B48\nобратилась к памяти по адресу 0x00000000.\nПамять не может быть \"read\".", fill=(0, 0, 0))
+            draw.rectangle([mx + mw - 85, my + mh - 30, mx + mw - 14, my + mh - 10], fill=(225, 225, 225), outline=(160, 160, 160))
+            draw.text((mx + mw - 58, my + mh - 26), "ОК", fill=(0, 0, 0))
 
         # 1. Pop-up Ads
         spawn_rate = self.v_ad_rate_var.get()
@@ -1495,11 +1771,12 @@ class ShakalStudioApp:
             img = Image.blend(img, self.live_prev_burn_img, alpha)
         self.live_prev_burn_img = img.copy()
 
-        # 9. Resolution Crush
-        res_pct = max(3, min(100, self.v_res_var.get()))
-        if res_pct < 100:
-            cw = max(24, int(out_w * (res_pct / 100.0)))
-            ch = max(18, int(out_h * (res_pct / 100.0)))
+        # 9. Resolution Crush (P-Quality contrast)
+        p_val = max(72, min(NATIVE_H, self.v_res_var.get()))
+        if p_val < NATIVE_H:
+            aspect = out_w / float(out_h)
+            cw = max(24, int(p_val * aspect))
+            ch = p_val
             img = img.resize((cw, ch), Image.Resampling.BILINEAR).resize((out_w, out_h), Image.Resampling.NEAREST)
 
         img = self.apply_video_watermark(img)
@@ -2128,7 +2405,15 @@ class ShakalStudioApp:
             self.apply_preset_dict(self.custom_presets[name])
 
     def apply_preset_dict(self, d):
-        self.global_res_var.set(d.get("res", 100))
+        res_v = d.get("res", NATIVE_H)
+        if res_v <= 100:
+            res_v = max(72, int((res_v / 100.0) * NATIVE_H))
+        self.global_res_var.set(res_v)
+        self.v_res_var.set(res_v)
+        self.ghost_windows_var.set(d.get("ghost_windows", 0))
+        self.v_ghost_var.set(d.get("ghost_windows", 0))
+        self.gpu_art_var.set(d.get("gpu_artifacts", 0))
+        self.v_gpu_art_var.set(d.get("gpu_artifacts", 0))
         self.q_var.set(d.get("q", 70))
         self.pix_var.set(d.get("pix", 1))
         self.fry_var.set(d.get("fry", 1.1))
@@ -2168,7 +2453,8 @@ class ShakalStudioApp:
                   self.ctrl_datamosh, self.ctrl_swirl, self.ctrl_bitcrush, self.ctrl_crt,
                   self.ctrl_jitter, self.ctrl_vignette, self.ctrl_vhs,
                   self.ctrl_dialup, self.ctrl_fisheye, self.ctrl_xp_drag,
-                  self.ctrl_ads, self.ctrl_ad_alpha, self.ctrl_art, self.ctrl_noise, self.ctrl_delay]:
+                  self.ctrl_ads, self.ctrl_ad_alpha, self.ctrl_art, self.ctrl_noise, self.ctrl_delay,
+                  self.ctrl_ghost, self.ctrl_gpu_art, self.ctrl_v_ghost, self.ctrl_v_gpu]:
             s.update_entry()
             s.scale.set(s.var.get())
         for c in [self.chk_invert, self.chk_solarize, self.chk_matrix, self.chk_dead, self.chk_cursor, self.chk_activate,
@@ -2178,10 +2464,18 @@ class ShakalStudioApp:
         self.menu_av.lbl.config(text=self.menu_av.get_text())
 
     def update_master_res_label(self, *args):
-        pct = max(1, min(100, self.global_res_var.get()))
-        tw = max(24, int(NATIVE_W * (pct / 100.0)))
-        th = max(18, int(NATIVE_H * (pct / 100.0)))
-        self.lbl_master_res.config(text=f"Разрешение: {tw}x{th} ({pct}%)")
+        val = max(72, min(NATIVE_H, self.global_res_var.get()))
+        aspect = NATIVE_W / float(NATIVE_H)
+        tw = max(32, int(val * aspect))
+        th = val
+        self.lbl_master_res.config(text=f"Качество: {th}p — {tw}x{th}")
+
+    def update_v_res_label(self, *args):
+        val = max(72, min(NATIVE_H, self.v_res_var.get()))
+        aspect = NATIVE_W / float(NATIVE_H)
+        tw = max(32, int(val * aspect))
+        th = val
+        self.lbl_v_res.config(text=f"Качество: {th}p — {tw}x{th}")
 
     def pick_save_folder(self):
         chosen = filedialog.askdirectory(initialdir=self.save_dir)
@@ -2597,10 +2891,38 @@ class ShakalStudioApp:
             sw, sh = max(16, img.width // pix), max(16, img.height // pix)
             img = img.resize((sw, sh), Image.Resampling.BILINEAR).resize((img.width, img.height), Image.Resampling.NEAREST)
 
-        pct = max(1, min(100, self.global_res_var.get()))
-        if pct < 100:
-            tw = max(24, int(NATIVE_W * (pct / 100.0)))
-            th = max(18, int(NATIVE_H * (pct / 100.0)))
+        # Ghost Windows in screenshot
+        ghost_s = self.ghost_windows_var.get()
+        if ghost_s > 0:
+            gw = int(img.width * 0.44)
+            gh = int(img.height * 0.4)
+            gx = (img.width - gw) // 2
+            gy = (img.height - gh) // 2
+            cut = img.crop((gx, gy, gx + gw, gy + gh))
+            steps = min(5, int((ghost_s / 100.0) * 5))
+            for st in range(steps, 0, -1):
+                ox = max(0, min(img.width - gw, gx + st * 22))
+                oy = max(0, min(img.height - gh, gy + st * 16))
+                img.paste(cut, (ox, oy))
+
+        # GPU VRAM Artifacts in screenshot
+        gpu_s = self.gpu_art_var.get()
+        if gpu_s > 0:
+            draw = ImageDraw.Draw(img)
+            num_b = int((gpu_s / 100.0) * 20)
+            for _ in range(num_b):
+                bx = random.randint(0, max(1, img.width - 64))
+                by = random.randint(0, max(1, img.height - 64))
+                for bi in range(4):
+                    for bj in range(4):
+                        c = (255, 0, 255) if (bi + bj) % 2 == 0 else (0, 255, 255)
+                        draw.rectangle([bx + bi*8, by + bj*8, bx + (bi+1)*8, by + (bj+1)*8], fill=c)
+
+        p_val = max(72, min(NATIVE_H, self.global_res_var.get()))
+        if p_val < NATIVE_H:
+            aspect = NATIVE_W / float(NATIVE_H)
+            tw = max(24, int(p_val * aspect))
+            th = p_val
             img = img.resize((tw, th), Image.Resampling.BILINEAR)
 
         os.makedirs(self.save_dir, exist_ok=True)
@@ -2673,6 +2995,12 @@ class ShakalStudioApp:
                     elif user32.GetAsyncKeyState(vk_vid) & 0x8000:
                         last_t = now
                         self.root.after(0, self.toggle_video_recording)
+                    elif user32.GetAsyncKeyState(0x7A) & 0x8000:
+                        last_t = now
+                        self.root.after(0, self.toggle_overlay_screen1)
+                    elif user32.GetAsyncKeyState(0x7B) & 0x8000:
+                        last_t = now
+                        self.root.after(0, self.stop_all_prank_streams)
             except Exception:
                 pass
             time.sleep(0.04)

@@ -382,6 +382,66 @@ class ShakalAudioEngine:
         return np.clip(data, -0.99, 0.99)
 
 
+def get_audio_input_devices():
+    devices = [(-1, "Системный микрофон по умолчанию")]
+    if not HAS_SOUNDDEVICE:
+        return devices
+    try:
+        seen = set()
+        for idx, d in enumerate(sd.query_devices()):
+            if d.get("max_input_channels", 0) > 0:
+                raw_name = d.get("name", f"Устройство {idx}")
+                clean_name = raw_name.replace("(", "").replace(")", "").strip()
+                if clean_name not in seen:
+                    seen.add(clean_name)
+                    devices.append((idx, f"Микрофон {clean_name}"))
+    except Exception:
+        pass
+    return devices
+
+
+def draw_realistic_vram_artifacts(img, intensity):
+    if intensity <= 0:
+        return img
+    w, h = img.size
+    pct = min(100, max(1, intensity)) / 100.0
+
+    # 1. Authentic Horizontal Memory Address Slices (Displacement)
+    num_slices = int(pct * 14) + 1
+    for _ in range(num_slices):
+        sy = random.randint(0, max(1, h - 8))
+        sh = random.randint(2, min(10, h - sy))
+        sw = random.randint(80, min(w, 450))
+        sx = random.randint(0, max(1, w - sw))
+        strip = img.crop((sx, sy, sx + sw, sy + sh))
+        shift_x = random.randint(-40, 40)
+        img.paste(strip, (max(0, min(w - sw, sx + shift_x)), sy))
+
+    # 2. Authentic GDDR VRAM Raster Lines (Green, Magenta, Cyan, Yellow bit-flips)
+    draw = ImageDraw.Draw(img)
+    num_lines = int(pct * 20) + 2
+    for _ in range(num_lines):
+        ly = random.randint(0, max(1, h - 2))
+        lx = random.randint(0, max(1, w - 80))
+        lw = random.randint(30, min(w - lx, 320))
+        col = random.choice([(0, 255, 120), (255, 0, 180), (0, 220, 255), (255, 230, 0), (220, 40, 40)])
+        draw.line([(lx, ly), (lx + lw, ly)], fill=col, width=random.randint(1, 2))
+
+    # 3. Memory Tile Blocks with channel swap
+    num_blocks = int(pct * 6)
+    for _ in range(num_blocks):
+        bx = random.randint(0, max(1, w - 48))
+        by = random.randint(0, max(1, h - 24))
+        bw = random.randint(24, 64)
+        bh = random.randint(8, 20)
+        blk = img.crop((bx, by, bx + bw, by + bh))
+        r, g, b = blk.split()
+        corrupt_blk = Image.merge("RGB", (b, r, g))
+        img.paste(corrupt_blk, (bx, by))
+
+    return img
+
+
 # =========================================================================
 #                         COMPACT MOTION UI
 # =========================================================================
@@ -394,6 +454,7 @@ THEME = {
     "accent_blue": "#38bdf8",
     "accent_rose": "#f43f5e",
     "accent_amber": "#f59e0b",
+    "accent_emerald": "#10b981",
     "text_main": "#f8fafc",
     "text_muted": "#64748b",
     "text_dim": "#94a3b8",
@@ -614,6 +675,22 @@ class ShakalStudioApp:
         self.overlay_canvas = None
         self._ghost_history = []
 
+        # Audio device & recording settings
+        self.v_mic_devices = get_audio_input_devices()
+        self.v_mic_device_var = tk.IntVar(value=-1)
+        self.v_mic_str_var = tk.StringVar(value="-1")
+        self.v_mic_gain_var = tk.IntVar(value=150)
+        self.lang_var = tk.StringVar(value="Русский")
+
+        # Discord Demonstration Wave Engine
+        self.is_demo_mode = False
+        self.discord_demo_severity_var = tk.IntVar(value=3)
+        self.demo_is_in_glitch = False
+        self.demo_glitch_end_time = 0
+        self.demo_next_glitch_time = time.time() + 15
+        self.demo_frozen_frame = None
+        self.demo_status_var = tk.StringVar(value="Система в норме")
+
         # COMPACT GEOMETRY: 1020x640 fits cleanly on any display
         self.root.title("Shakal Studio v9.0 Motion")
         self.root.geometry("1020x640")
@@ -673,6 +750,10 @@ class ShakalStudioApp:
         btn_test_snd = tk.Button(tools_frame, text="🔊 Тест Звука", font=("Segoe UI", 8, "bold"), bg=THEME["btn_bg"], fg=THEME["accent_rose"], bd=0, padx=7, pady=2, cursor="hand2", command=self.test_extreme_sound)
         btn_test_snd.pack(side="left", padx=2)
 
+        btn_settings = tk.Button(tools_frame, text="⚙️ Настройки", font=("Segoe UI", 8, "bold"), bg=THEME["btn_bg"], fg=THEME["text_main"], bd=0, padx=7, pady=2, cursor="hand2", command=self.open_settings_modal)
+        btn_settings.pack(side="left", padx=2)
+        self.setup_hover(btn_settings, "Настройки", "Выбор микрофона, усиление звука, язык интерфейса и папки.")
+
         # ==================== CONTAINER FRAMES ====================
         self.screen_mode_frame = tk.Frame(root, bg=THEME["bg_root"])
         self.video_mode_frame = tk.Frame(root, bg=THEME["bg_root"])
@@ -719,6 +800,100 @@ class ShakalStudioApp:
     def setup_hover(self, widget, title, desc):
         widget.bind("<Enter>", lambda e: self.show_hover_description(title, desc))
         widget.bind("<Leave>", lambda e: self.show_hover_description("", ""))
+
+    def _on_mic_device_changed(self, val):
+        try:
+            idx = int(val)
+            self.v_mic_device_var.set(idx)
+            self.v_mic_str_var.set(val)
+            if hasattr(self, "menu_v_mic"):
+                self.menu_v_mic.variable.set(val)
+                self.menu_v_mic.lbl.config(text=self.menu_v_mic.get_text())
+        except Exception:
+            pass
+
+    def test_selected_microphone(self):
+        if not HAS_SOUNDDEVICE:
+            self.v_status_var.set("Модуль sounddevice недоступен")
+            return
+
+        def _worker():
+            try:
+                mic_idx = self.v_mic_device_var.get()
+                dev_arg = None if mic_idx < 0 else mic_idx
+                self.v_status_var.set("Запись голоса 1.5 сек для проверки...")
+                rec_data = sd.rec(int(1.5 * ShakalAudioEngine.SAMPLE_RATE), samplerate=ShakalAudioEngine.SAMPLE_RATE, channels=1, device=dev_arg, dtype="float32")
+                sd.wait()
+                gain = max(0.5, self.v_mic_gain_var.get() / 100.0)
+                rec_data = np.clip(rec_data * gain, -0.99, 0.99)
+                max_amp = float(np.max(np.abs(rec_data)))
+                self.v_status_var.set(f"Воспроизведение... громкость {int(max_amp * 100)}%")
+                sd.play(rec_data, ShakalAudioEngine.SAMPLE_RATE)
+                sd.wait()
+                self.v_status_var.set("Тест микрофона завершен!")
+            except Exception:
+                self.v_status_var.set("Ошибка проверки микрофона")
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def trigger_instant_demo_glitch(self):
+        self.demo_is_in_glitch = True
+        sev = self.discord_demo_severity_var.get()
+        durations = {1: 0.6, 2: 1.0, 3: 1.6, 4: 2.4, 5: 3.5}
+        dur = durations.get(sev, 1.6)
+        self.demo_glitch_end_time = time.time() + dur
+        try:
+            raw = ImageGrab.grab().convert("RGB")
+            self.demo_frozen_frame = raw
+        except Exception:
+            pass
+        ShakalAudioEngine.play("dpc_freeze")
+        if sev >= 4:
+            self.tdr_toast_timer = 90
+        self.demo_status_var.set("⚠️ СБОЙ ВИДЕОКАРТЫ И ЗВУКА")
+        self.v_status_var.set("Спровоцирован мгновенный сбой видеокарты!")
+
+    def open_settings_modal(self):
+        modal = tk.Toplevel(self.root)
+        modal.title("Настройки студии")
+        modal.geometry("520x440")
+        modal.resizable(False, False)
+        modal.configure(bg=THEME["bg_root"])
+        modal.transient(self.root)
+        modal.grab_set()
+
+        m_top = tk.Frame(modal, bg=THEME["bg_card"], highlightbackground=THEME["border_card"], highlightthickness=1)
+        m_top.pack(fill="x", padx=12, pady=8)
+        tk.Label(m_top, text="⚙️ НАСТРОЙКИ СТУДИИ И ЗВУКА", font=("Segoe UI", 9, "bold"), bg=THEME["bg_card"], fg=THEME["accent_blue"]).pack(side="left", padx=10, pady=6)
+
+        m_body = tk.Frame(modal, bg=THEME["bg_card"], highlightbackground=THEME["border_card"], highlightthickness=1)
+        m_body.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+
+        lang_f = tk.Frame(m_body, bg=THEME["bg_card"])
+        lang_f.pack(fill="x", padx=10, pady=4)
+        tk.Label(lang_f, text="Язык интерфейса:", font=("Segoe UI", 8, "bold"), bg=THEME["bg_card"], fg=THEME["text_dim"]).pack(side="left")
+        MotionDropdown(lang_f, self.lang_var, ["Русский", "English"]).pack(side="right")
+
+        mic_f = tk.Frame(m_body, bg=THEME["bg_card"])
+        mic_f.pack(fill="x", padx=10, pady=4)
+        tk.Label(mic_f, text="Устройство микрофона:", font=("Segoe UI", 8, "bold"), bg=THEME["bg_card"], fg=THEME["text_dim"]).pack(side="left")
+        dev_map = {str(d[0]): d[1] for d in self.v_mic_devices}
+        dev_keys = [str(d[0]) for d in self.v_mic_devices]
+        MotionDropdown(mic_f, self.v_mic_str_var, dev_keys, display_names=dev_map, callback=self._on_mic_device_changed).pack(side="right", fill="x", expand=True, padx=(8, 0))
+
+        MotionSlider(m_body, "Усиление микрофона", self.v_mic_gain_var, 50, 500, "Увеличение громкости записи голоса")
+
+        btn_t_mic = tk.Button(m_body, text="🎤 Проверить микрофон 1.5 сек", font=("Segoe UI", 8, "bold"), bg=THEME["btn_bg"], fg=THEME["accent_emerald"], bd=0, pady=3, cursor="hand2", highlightbackground=THEME["accent_emerald"], highlightthickness=1, command=self.test_selected_microphone)
+        btn_t_mic.pack(fill="x", padx=10, pady=3)
+
+        MotionSlider(m_body, "Жесткость discord demonsration", self.discord_demo_severity_var, 1, 5, "1 - слабо и почти незаметно, 5 - частая смерть видюхи и зависание звука")
+
+        f_dir = tk.Frame(m_body, bg=THEME["bg_card_inner"], highlightbackground=THEME["border_card"], highlightthickness=1)
+        f_dir.pack(fill="x", padx=10, pady=4)
+        tk.Label(f_dir, text=f"Папка видео: {os.path.basename(self.video_save_dir) or self.video_save_dir}", font=("Segoe UI", 8), bg=THEME["bg_card_inner"], fg=THEME["accent_rose"]).pack(side="left", padx=6, pady=3)
+        tk.Button(f_dir, text="Сменить", font=("Segoe UI", 8), bg=THEME["btn_bg"], fg=THEME["text_main"], bd=0, padx=6, pady=2, cursor="hand2", command=self.pick_video_folder).pack(side="right", padx=6)
+
+        tk.Button(modal, text="СОХРАНИТЬ И ЗАКРЫТЬ", font=("Segoe UI", 9, "bold"), bg=THEME["accent_blue"], fg="#000000", bd=0, pady=5, cursor="hand2", command=modal.destroy).pack(fill="x", padx=12, pady=(0, 8))
 
     def apply_display_affinity(self):
         try:
@@ -1004,6 +1179,7 @@ class ShakalStudioApp:
         tk.Label(v_top, text="Видео-стиль:", font=("Segoe UI", 8), bg=THEME["bg_root"], fg=THEME["text_dim"]).pack(side="left")
 
         v_presets = [
+            "discord demonsration",
             "🛡️ Чит-Проверка: Сбой Windows и Видеокарты",
             "Проверка на читы",
             "Стандартный Шакал",
@@ -1015,9 +1191,18 @@ class ShakalStudioApp:
             "Выгорание Матрицы OLED",
             "VHS Хоррор 1994"
         ]
-        self.v_preset_var = tk.StringVar(value="Стандартный Шакал")
+        self.v_preset_var = tk.StringVar(value="discord demonsration")
         self.menu_v_presets = MotionDropdown(v_top, self.v_preset_var, v_presets, callback=self.on_video_preset_picked, hover_cb=self.show_hover_description, hover_title="Видео-стили", hover_desc="Готовые конфигурации для записи видео и стрима.")
         self.menu_v_presets.pack(side="left", padx=(3, 6))
+
+        btn_v_demo = tk.Button(
+            v_top, text="🎮 discord demonsration", font=("Segoe UI", 8, "bold"),
+            bg=THEME["btn_bg"], fg=THEME["accent_emerald"], activebackground=THEME["accent_emerald"], activeforeground="#000000",
+            bd=0, padx=6, pady=2, cursor="hand2", highlightbackground=THEME["accent_emerald"], highlightthickness=1,
+            command=lambda: self.on_video_preset_picked("discord demonsration")
+        )
+        btn_v_demo.pack(side="left", padx=(0, 4))
+        self.setup_hover(btn_v_demo, "discord demonsration", "Включает циклы зависаний, смерти видеокарты и статтеров звука с настройкой жесткости от 1 до 5.")
 
         btn_v_cheat = tk.Button(
             v_top, text="🛡️ Чит-Проверка", font=("Segoe UI", 8, "bold"),
@@ -1102,8 +1287,19 @@ class ShakalStudioApp:
 
         tk.Label(vc2, text="● Живые рекламы и хаос", font=("Segoe UI", 8, "bold"), bg=THEME["bg_card"], fg=THEME["accent_amber"]).pack(anchor="w", padx=6, pady=(3, 1))
 
+        self.ctrl_v_severity = MotionSlider(vc2, "Жесткость сбоя 1-5", self.discord_demo_severity_var, 1, 5, "1 - слабо и почти незаметно для проверок, 5 - частая смерть видеокарты и зависание звука.", hover_cb=self.show_hover_description)
+
+        btn_v_instant = tk.Button(
+            vc2, text="⚡ Спровоцировать сбой в моменте", font=("Segoe UI", 8, "bold"),
+            bg=THEME["btn_bg"], fg=THEME["accent_rose"], activebackground=THEME["accent_rose"], activeforeground="#ffffff",
+            bd=0, pady=2, cursor="hand2", highlightbackground=THEME["accent_rose"], highlightthickness=1,
+            command=self.trigger_instant_demo_glitch
+        )
+        btn_v_instant.pack(fill="x", padx=4, pady=(1, 3))
+        self.setup_hover(btn_v_instant, "Сбой в моменте", "Мгновенно вызывает зависание экрана, сбой видеокарты и звук DPC freeze на несколько секунд.")
+
         self.ctrl_v_ghost = MotionSlider(vc2, "Залагивание окон и кадров", self.v_ghost_var, 0, 100, "Залипание старых окон и кадровый троттлинг: старые окна не закрываются на стриме.", hover_cb=self.show_hover_description)
-        self.ctrl_v_gpu = MotionSlider(vc2, "Артефакты памяти GPU", self.v_gpu_art_var, 0, 100, "Шахматные цветные артефакты умирающей видеокарты для проверок.", hover_cb=self.show_hover_description)
+        self.ctrl_v_gpu = MotionSlider(vc2, "Артефакты памяти GPU", self.v_gpu_art_var, 0, 100, "Реалистичные полосы и сбой видеопамяти видеокарты.", hover_cb=self.show_hover_description)
 
         self.v_ad_rate_var = tk.IntVar(value=45)
         self.ctrl_v_ad_rate = MotionSlider(vc2, "Скорость появления реклам", self.v_ad_rate_var, 0, 100, "Как часто новые рекламные баннеры выскакивают на экране.", hover_cb=self.show_hover_description)
@@ -1155,6 +1351,25 @@ class ShakalStudioApp:
         self.v_audio_enable_var = tk.BooleanVar(value=True)
         self.chk_v_audio = MotionCheck(vc3, "Включить аудиодорожку в видео", self.v_audio_enable_var, "Запись звука и сведение шакальных эффектов в готовый ролик.", hover_cb=self.show_hover_description)
 
+        vmic_f = tk.Frame(vc3, bg=THEME["bg_card"])
+        vmic_f.pack(fill="x", padx=4, pady=1)
+        tk.Label(vmic_f, text="Микрофон:", font=("Segoe UI", 8), bg=THEME["bg_card"], fg=THEME["text_dim"]).pack(side="left")
+        dev_map = {str(d[0]): d[1] for d in self.v_mic_devices}
+        dev_keys = [str(d[0]) for d in self.v_mic_devices]
+        self.menu_v_mic = MotionDropdown(vmic_f, self.v_mic_str_var, dev_keys, display_names=dev_map, callback=self._on_mic_device_changed, hover_cb=self.show_hover_description, hover_title="Выбор микрофона", hover_desc="Устройство записи звука для видеоролика.")
+        self.menu_v_mic.pack(side="right", fill="x", expand=True, padx=(4, 0))
+
+        self.ctrl_v_mic_gain = MotionSlider(vc3, "Усиление микрофона", self.v_mic_gain_var, 50, 500, "Увеличение громкости записи голоса от 50% до 500%", hover_cb=self.show_hover_description)
+
+        btn_test_mic = tk.Button(
+            vc3, text="🎤 Проверить микрофон 1.5 сек", font=("Segoe UI", 8, "bold"),
+            bg=THEME["btn_bg"], fg=THEME["accent_emerald"], activebackground=THEME["accent_emerald"], activeforeground="#000000",
+            bd=0, pady=2, cursor="hand2", highlightbackground=THEME["accent_emerald"], highlightthickness=1,
+            command=self.test_selected_microphone
+        )
+        btn_test_mic.pack(fill="x", padx=4, pady=(1, 2))
+        self.setup_hover(btn_test_mic, "Тест микрофона", "Записывает 1.5 секунды голоса и сразу воспроизводит в наушники для проверки громкости.")
+
         self.v_bass_var = tk.IntVar(value=40)
         self.ctrl_v_bass = MotionSlider(vc3, "Басс-буст и перегруз", self.v_bass_var, 0, 100, "Усиление суб-баса и нелинейная сатурация до адского хрипа.", hover_cb=self.show_hover_description)
 
@@ -1180,8 +1395,8 @@ class ShakalStudioApp:
         self.menu_v_bind = MotionDropdown(vhk_f, self.v_bind_var, ["F8", "F9", "F10", "F11", "F12"], hover_cb=self.show_hover_description, hover_title="Бинд видео", hover_desc="Горячая клавиша старта и остановки записи видео.")
         self.menu_v_bind.pack(side="right", fill="x", expand=True, padx=(6, 0))
 
-        self.v_limit_sec_var = tk.IntVar(value=15)
-        self.ctrl_v_limit = MotionSlider(vc3, "Лимит длительности записи", self.v_limit_sec_var, 3, 120, "Максимальная длина видеоролика в секундах.", hover_cb=self.show_hover_description)
+        self.v_limit_sec_var = tk.IntVar(value=30)
+        self.ctrl_v_limit = MotionSlider(vc3, "Лимит длительности записи", self.v_limit_sec_var, 5, 300, "Максимальная длина видеоролика в секундах до 5 минут.", hover_cb=self.show_hover_description)
 
         vsave_box = tk.Frame(vc3, bg=THEME["bg_card_inner"], highlightbackground=THEME["border_card"], highlightthickness=1)
         vsave_box.pack(fill="x", padx=4, pady=2)
@@ -1254,6 +1469,15 @@ class ShakalStudioApp:
         )
         self.btn_pop_stream.pack(side="left", padx=2)
 
+        # Discord Demonstration Preset Button
+        btn_d_demo = tk.Button(
+            head_f, text="🎮 DISCORD DEMONSRATION", font=("Segoe UI", 8, "bold"),
+            bg=THEME["btn_bg"], fg=THEME["accent_emerald"], activebackground=THEME["accent_emerald"], activeforeground="#000000",
+            bd=0, padx=8, pady=2, cursor="hand2", highlightbackground=THEME["accent_emerald"], highlightthickness=1,
+            command=lambda: self.on_video_preset_picked("discord demonsration")
+        )
+        btn_d_demo.pack(side="left", padx=2)
+
         # Quick cheat check preset trigger right on Discord tab
         btn_quick_cheat = tk.Button(
             head_f, text="🛡️ ПРЕСЕТ: ПРОВЕРКА НА ЧИТЫ", font=("Segoe UI", 8, "bold"),
@@ -1293,6 +1517,22 @@ class ShakalStudioApp:
         # Right Column: Instant Prank Triggers
         triggers_card = tk.Frame(d_body, bg=THEME["bg_card"], highlightbackground=THEME["border_card"], highlightthickness=1)
         triggers_card.grid(row=0, column=1, sticky="nsew", padx=(2, 0), pady=1)
+
+        # Section: Discord Demonstration Wave Mode
+        tk.Label(triggers_card, text="🎮 Режим discord demonsration", font=("Segoe UI", 8, "bold"), bg=THEME["bg_card"], fg=THEME["accent_emerald"]).pack(anchor="w", padx=6, pady=(3, 1))
+
+        self.ctrl_d_severity = MotionSlider(triggers_card, "Жесткость сбоя 1-5", self.discord_demo_severity_var, 1, 5, "1 - слабо и почти незаметно для проверок, 5 - частая смерть видеокарты и зависание звука.", hover_cb=self.show_hover_description)
+
+        btn_d_instant = tk.Button(
+            triggers_card, text="⚡ СПРОВОЦИРОВАТЬ СБОЙ В МОМЕНТЕ", font=("Segoe UI", 8, "bold"),
+            bg=THEME["accent_rose"], fg="#ffffff", activebackground="#be123c", activeforeground="#ffffff",
+            bd=0, pady=4, cursor="hand2", command=self.trigger_instant_demo_glitch
+        )
+        btn_d_instant.pack(fill="x", padx=6, pady=(2, 3))
+        self.setup_hover(btn_d_instant, "Сбой в моменте", "Мгновенно вызывает зависание экрана, сбой видеокарты и звук DPC freeze на несколько секунд.")
+
+        self.d_demo_badge = tk.Label(triggers_card, textvariable=self.demo_status_var, font=("Consolas", 8, "bold"), bg=THEME["bg_card_inner"], fg=THEME["accent_emerald"], pady=2)
+        self.d_demo_badge.pack(fill="x", padx=6, pady=(0, 4))
 
         # Section: Cheat Check & Real Windows Bugs
         tk.Label(triggers_card, text="🛡️ Проверка на читы: баги системы", font=("Segoe UI", 8, "bold"), bg=THEME["bg_card"], fg=THEME["accent_amber"]).pack(anchor="w", padx=6, pady=(3, 1))
@@ -1591,14 +1831,7 @@ class ShakalStudioApp:
         # 2. GPU VRAM Artifacts on overlay
         gpu_v = self.v_gpu_art_var.get() or self.gpu_art_var.get()
         if gpu_v > 0:
-            count = int((gpu_v / 100.0) * 22)
-            for _ in range(count):
-                bx = random.randint(0, max(1, NATIVE_W - 64))
-                by = random.randint(0, max(1, NATIVE_H - 64))
-                for bi in range(4):
-                    for bj in range(4):
-                        col = (255, 0, 255) if (bi + bj) % 2 == 0 else (0, 255, 255)
-                        draw.rectangle([bx + bi*8, by + bj*8, bx + (bi+1)*8, by + (bj+1)*8], fill=col)
+            ov_img = draw_realistic_vram_artifacts(ov_img, gpu_v)
 
         # 3. TDR toast on overlay
         if self.tdr_toast_timer > 0:
@@ -1634,7 +1867,38 @@ class ShakalStudioApp:
             )
             if need_work:
                 try:
-                    raw = ImageGrab.grab().convert("RGB")
+                    now = time.time()
+                    if self.is_demo_mode:
+                        sev = self.discord_demo_severity_var.get()
+                        if not self.demo_is_in_glitch:
+                            if now >= self.demo_next_glitch_time:
+                                self.demo_is_in_glitch = True
+                                durations = {1: 0.6, 2: 1.0, 3: 1.6, 4: 2.4, 5: 3.5}
+                                self.demo_glitch_end_time = now + durations.get(sev, 1.6)
+                                try:
+                                    self.demo_frozen_frame = ImageGrab.grab().convert("RGB")
+                                except Exception:
+                                    self.demo_frozen_frame = None
+                                if sev >= 2:
+                                    ShakalAudioEngine.play("dpc_freeze")
+                                if sev >= 4:
+                                    self.tdr_toast_timer = 90
+                                self.demo_status_var.set("⚠️ СБОЙ ВИДЕОКАРТЫ И ЗВУКА")
+                        else:
+                            if now >= self.demo_glitch_end_time:
+                                # "А ПОТОМ ОТПУСКАЛО" - возврат к нормальной работе
+                                self.demo_is_in_glitch = False
+                                self.demo_frozen_frame = None
+                                intervals = {1: (30, 50), 2: (20, 35), 3: (15, 25), 4: (10, 18), 5: (6, 12)}
+                                low_i, high_i = intervals.get(sev, (15, 25))
+                                self.demo_next_glitch_time = now + random.uniform(low_i, high_i)
+                                self.demo_status_var.set("Система в норме")
+
+                    if self.is_demo_mode and self.demo_is_in_glitch and self.demo_frozen_frame is not None:
+                        raw = self.demo_frozen_frame.copy()
+                    else:
+                        raw = ImageGrab.grab().convert("RGB")
+
                     processed = self._process_video_effects_live(raw)
 
                     # Update embedded preview on Discord tab
@@ -1719,23 +1983,18 @@ class ShakalStudioApp:
                     alpha = min(0.85, (ghost_v / 100.0) * 0.8)
                     img = Image.blend(img, old_snap, alpha)
 
-        # GPU VRAM Artifacts (Шахматка)
-        gpu_v = self.v_gpu_art_var.get()
-        if gpu_v > 0:
-            draw = ImageDraw.Draw(img)
-            count = int((gpu_v / 100.0) * 20)
-            for _ in range(count):
-                bx = random.randint(0, max(1, out_w - 64))
-                by = random.randint(0, max(1, out_h - 64))
-                for bi in range(4):
-                    for bj in range(4):
-                        col = (255, 0, 255) if (bi + bj) % 2 == 0 else (0, 255, 255)
-                        draw.rectangle([bx + bi*8, by + bj*8, bx + (bi+1)*8, by + (bj+1)*8], fill=col)
-            if random.random() < (gpu_v / 100.0):
-                for _ in range(int((gpu_v / 100.0) * 6)):
-                    ly = random.randint(0, out_h - 2)
-                    lx = random.randint(0, out_w // 2)
-                    draw.line([(lx, ly), (lx + random.randint(60, 260), ly)], fill=random.choice([(255, 0, 0), (0, 255, 0), (0, 255, 255)]), width=random.randint(1, 2))
+        # Realistic GPU VRAM Artifacts (GDDR сбой памяти и полосы)
+        if self.is_demo_mode:
+            if self.demo_is_in_glitch:
+                sev = self.discord_demo_severity_var.get()
+                intensity = min(100, 20 * sev)
+                img = draw_realistic_vram_artifacts(img, intensity)
+                if sev >= 3 and random.random() < 0.15:
+                    return Image.new("RGB", (out_w, out_h), (0, 0, 0))
+        else:
+            gpu_v = self.v_gpu_art_var.get()
+            if gpu_v > 0:
+                img = draw_realistic_vram_artifacts(img, gpu_v)
 
         # TDR Toast
         if self.tdr_toast_timer > 0:
@@ -2022,7 +2281,52 @@ class ShakalStudioApp:
             self.lbl_v_save_dir.config(text=f"Папка: {os.path.basename(self.video_save_dir) or self.video_save_dir}")
 
     def on_video_preset_picked(self, name):
-        if name in ("🛡️ Чит-Проверка: Сбой Windows и Видеокарты", "Проверка на читы"):
+        if name in ("discord demonsration", "Discord Демонстрация"):
+            self.is_demo_mode = True
+            self.v_res_var.set(NATIVE_H)
+            self.v_fps_var.set(60)
+            self.v_q_var.set(95)
+            self.v_burn_var.set(0)
+            self.v_fry_var.set(1.0)
+            self.v_stutter_var.set(0)
+            self.v_rgb_var.set(0)
+            self.v_mosh_var.set(0)
+            self.v_tear_var.set(0)
+            self.v_crt_var.set(0)
+            self.v_invert_var.set(False)
+            self.v_ghost_var.set(50)
+            self.v_gpu_art_var.set(40)
+            self.v_ad_rate_var.set(0)
+            self.v_ad_max_var.set(0)
+            self.v_ad_shake_var.set(0)
+            self.v_ad_accum_var.set(False)
+            self.v_ad_sound_var.set(False)
+            self.v_rand_av_var.set(False)
+            self.v_rand_scr_var.set(False)
+            self.v_scr_extreme_var.set(False)
+            self.v_end_bsod_var.set(False)
+            self.v_wm_var.set("none")
+            if hasattr(self, "menu_v_wm"):
+                self.menu_v_wm.lbl.config(text="Без знака")
+            self.v_audio_enable_var.set(True)
+            self.v_bass_var.set(0)
+            self.v_clip_var.set(0)
+            self.v_drop_var.set(0)
+            self.v_bit_var.set(0)
+            self.v_hum_var.set(0)
+            self.v_screamer_vol_var.set(0)
+            self.demo_is_in_glitch = False
+            self.demo_next_glitch_time = time.time() + 10
+            self.demo_frozen_frame = None
+            try:
+                raw = ImageGrab.grab().convert("RGB")
+                self._ghost_history = [raw, raw]
+            except Exception:
+                pass
+            self.v_status_var.set("Пресет discord demonsration включен: волны зависаний и смерти видеокарты!")
+            ShakalAudioEngine.play("usb_disconnect")
+        elif name in ("🛡️ Чит-Проверка: Сбой Windows и Видеокарты", "Проверка на читы"):
+            self.is_demo_mode = False
             self.v_res_var.set(NATIVE_H)
             self.v_fps_var.set(60)
             self.v_q_var.set(95)
@@ -2191,6 +2495,18 @@ class ShakalStudioApp:
                   self.ctrl_v_bass, self.ctrl_v_clip, self.ctrl_v_drop, self.ctrl_v_bit, self.ctrl_v_hum, self.ctrl_v_scr_vol]:
             s.update_entry()
             s.scale.set(s.var.get())
+        if hasattr(self, "ctrl_v_severity") and self.ctrl_v_severity:
+            self.ctrl_v_severity.update_entry()
+            self.ctrl_v_severity.scale.set(self.ctrl_v_severity.var.get())
+        if hasattr(self, "ctrl_d_severity") and self.ctrl_d_severity:
+            self.ctrl_d_severity.update_entry()
+            self.ctrl_d_severity.scale.set(self.ctrl_d_severity.var.get())
+        if hasattr(self, "ctrl_v_mic_gain") and self.ctrl_v_mic_gain:
+            self.ctrl_v_mic_gain.update_entry()
+            self.ctrl_v_mic_gain.scale.set(self.ctrl_v_mic_gain.var.get())
+        if hasattr(self, "ctrl_v_limit") and self.ctrl_v_limit:
+            self.ctrl_v_limit.update_entry()
+            self.ctrl_v_limit.scale.set(self.ctrl_v_limit.var.get())
         for c in [self.chk_v_inv, self.chk_v_accum, self.chk_v_adsnd, self.chk_v_av, self.chk_v_scr, self.chk_v_scr_ext, self.chk_v_bsod]:
             c.sync()
 
@@ -2251,7 +2567,7 @@ class ShakalStudioApp:
     def _video_record_worker(self):
         try:
             fps = max(1, min(240, self.v_fps_var.get()))
-            max_sec = max(3, min(120, self.v_limit_sec_var.get()))
+            max_sec = max(3, min(300, self.v_limit_sec_var.get()))
             out_w, out_h = 960, 540
 
             os.makedirs(self.video_save_dir, exist_ok=True)
@@ -2269,13 +2585,19 @@ class ShakalStudioApp:
 
             if record_audio:
                 try:
+                    mic_idx = self.v_mic_device_var.get()
+                    dev_arg = None if mic_idx < 0 else mic_idx
                     def _audio_callback(indata, frames, time_info, status):
                         if self.is_recording_video:
                             audio_chunks.append(indata.copy())
-                    audio_stream = sd.InputStream(samplerate=ShakalAudioEngine.SAMPLE_RATE, channels=1, callback=_audio_callback)
+                    audio_stream = sd.InputStream(device=dev_arg, samplerate=ShakalAudioEngine.SAMPLE_RATE, channels=1, callback=_audio_callback)
                     audio_stream.start()
                 except Exception:
-                    audio_stream = None
+                    try:
+                        audio_stream = sd.InputStream(samplerate=ShakalAudioEngine.SAMPLE_RATE, channels=1, callback=_audio_callback)
+                        audio_stream.start()
+                    except Exception:
+                        audio_stream = None
 
             active_ads = []
             active_av_timer = 0
@@ -2398,11 +2720,22 @@ class ShakalStudioApp:
                         img = Image.blend(img, prev_burn_img, alpha)
                     prev_burn_img = img.copy()
 
-                    # Resolution Crush
-                    res_pct = max(3, min(100, self.v_res_var.get()))
-                    if res_pct < 100:
-                        cw = max(24, int(out_w * (res_pct / 100.0)))
-                        ch = max(18, int(out_h * (res_pct / 100.0)))
+                    # Realistic GPU VRAM Artifacts in video recording
+                    if self.is_demo_mode:
+                        if self.demo_is_in_glitch:
+                            sev = self.discord_demo_severity_var.get()
+                            img = draw_realistic_vram_artifacts(img, min(100, 20 * sev))
+                    else:
+                        gpu_v = self.v_gpu_art_var.get()
+                        if gpu_v > 0:
+                            img = draw_realistic_vram_artifacts(img, gpu_v)
+
+                    # Resolution Crush (P-Quality contrast)
+                    p_val = max(72, min(NATIVE_H, self.v_res_var.get()))
+                    if p_val < NATIVE_H:
+                        aspect = out_w / float(out_h)
+                        cw = max(24, int(p_val * aspect))
+                        ch = p_val
                         img = img.resize((cw, ch), Image.Resampling.BILINEAR).resize((out_w, out_h), Image.Resampling.NEAREST)
 
                     img = self.apply_video_watermark(img)
@@ -2459,6 +2792,8 @@ class ShakalStudioApp:
             if audio_chunks:
                 try:
                     raw_audio = np.concatenate(audio_chunks, axis=0)
+                    gain_factor = max(0.5, self.v_mic_gain_var.get() / 100.0)
+                    raw_audio = raw_audio * gain_factor
                     final_audio_pcm = ShakalAudioEngine.process_shakal_audio(raw_audio, audio_settings, screamer_timestamps)
                 except Exception:
                     final_audio_pcm = None
@@ -2466,7 +2801,7 @@ class ShakalStudioApp:
             if final_audio_pcm is None and self.v_audio_enable_var.get():
                 sr = ShakalAudioEngine.SAMPLE_RATE
                 num_samps = int(sr * total_duration)
-                synth = np.zeros(num_samps, dtype=np.float32)
+                synth = np.random.normal(0, 0.008, num_samps).astype(np.float32)
                 final_audio_pcm = ShakalAudioEngine.process_shakal_audio(synth, audio_settings, screamer_timestamps)
 
             if final_audio_pcm is not None and FFMPEG_EXE and os.path.exists(raw_video_path):
@@ -2585,6 +2920,11 @@ class ShakalStudioApp:
             })
             self.stop_all_prank_streams()
             self.status_var.set("Настройки сброшены")
+        elif name in ("discord demonsration", "Discord Демонстрация"):
+            self.on_video_preset_picked("discord demonsration")
+            if name in self.custom_presets:
+                self.apply_preset_dict(self.custom_presets[name])
+            self.status_var.set("Пресет discord demonsration применен")
         elif name in ("🛡️ Чит-Проверка: Сбой Windows и Видеокарты", "Проверка на читы"):
             self.apply_cheat_check_preset()
         elif name in self.custom_presets:
@@ -2634,6 +2974,15 @@ class ShakalStudioApp:
         self.vhs_tracking_var.set(d.get("vhs_tracking", 0))
         self.bitcrush_var.set(d.get("bitcrush", 0))
         self.sound_choice_var.set(d.get("sound", "usb_disconnect"))
+        if "discord_severity" in d:
+            sev = int(d.get("discord_severity", 3))
+            self.discord_demo_severity_var.set(sev)
+            if hasattr(self, 'ctrl_v_severity'):
+                self.ctrl_v_severity.update_entry()
+                self.ctrl_v_severity.scale.set(sev)
+            if hasattr(self, 'ctrl_d_severity'):
+                self.ctrl_d_severity.update_entry()
+                self.ctrl_d_severity.scale.set(sev)
 
         self.update_master_res_label()
         for s in [self.ctrl_q, self.ctrl_pix, self.ctrl_fry, self.ctrl_sharp, self.ctrl_rgb,

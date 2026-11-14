@@ -1,0 +1,30 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Temporary processing files
+temp_*.mp4
+temp_*.wav
+temp_*.avi
+*.tmp
+
+# User output folders (keep folder structure with .gitkeep)
+screenshots/*
+!screenshots/.gitkeep
+videos/*
+!videos/.gitkeep
+
+# Windows / OS files
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Environments
+.venv/
+venv/
+env/
+
+# IDE files
+.vscode/
+.idea/

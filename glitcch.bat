@@ -1,4 +1,4 @@
-@echo off & cd /d "%~dp0" & chcp 65001 >nul & title Shakal Studio v9.0 Motion & echo Loading Shakal Studio v9.0 Motion... & python -m pip install pillow opencv-python numpy sounddevice scipy imageio-ffmpeg --quiet & python -x "%~f0" & exit /b
+@echo off & cd /d "%~dp0" & chcp 65001 >nul & title Shakal Studio Motion & echo Loading Shakal Studio Motion... & python -m pip install pillow opencv-python numpy sounddevice scipy imageio-ffmpeg --quiet & python -x "%~f0" & exit /b
 # -*- coding: utf-8 -*-
 
 import os
@@ -692,7 +692,7 @@ class ShakalStudioApp:
         self.demo_status_var = tk.StringVar(value="Система в норме")
 
         # COMPACT GEOMETRY: 1020x640 fits cleanly on any display
-        self.root.title("Shakal Studio v9.0 Motion")
+        self.root.title("Shakal Studio Motion")
         self.root.geometry("1020x640")
         self.root.resizable(False, False)
         self.root.configure(bg=THEME["bg_root"])
@@ -712,7 +712,7 @@ class ShakalStudioApp:
         brand_frame.pack(side="left", padx=(8, 12), pady=4)
         tk.Label(brand_frame, text="SHAKAL", font=("Segoe UI", 10, "bold"), bg=THEME["bg_card"], fg=THEME["text_main"]).pack(side="left")
         tk.Label(brand_frame, text="STUDIO", font=("Segoe UI", 10, "bold"), bg=THEME["bg_card"], fg=THEME["accent_blue"]).pack(side="left", padx=(2, 4))
-        tk.Label(brand_frame, text="v9.0", font=("Consolas", 8, "bold"), bg=THEME["bg_card_inner"], fg=THEME["text_dim"], padx=5, pady=1).pack(side="left")
+        # version badge removed
 
         # Mode Buttons
         self.btn_mode_screen = tk.Button(

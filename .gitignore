@@ -25,6 +25,9 @@ desktop.ini
 venv/
 env/
 
+# Local helper scripts
+push_to_github.bat
+
 # IDE files
 .vscode/
 .idea/
